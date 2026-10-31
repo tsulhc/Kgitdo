@@ -11,8 +11,13 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
     if (m_auth) {
         // Signing out invalidates the token the list was loaded with:
         // drop everything rather than showing another user's tasks.
+        // Only an actual sign-out clears: Refreshing is a transient
+        // renewal (manual refresh or restore) and Failed keeps the prior
+        // tokens in the session, so neither must discard valid issue
+        // state. Terminal revocations (401/bad refresh token) already
+        // transition to SignedOut, which is where cleanup happens.
         connect(m_auth, &AuthSession::statusChanged, this, [this]() {
-            if (m_auth->isAuthenticated()) {
+            if (m_auth->status() != AuthSession::SignedOut) {
                 return;
             }
             // Invalidate any in-flight fetch first: its callback must not

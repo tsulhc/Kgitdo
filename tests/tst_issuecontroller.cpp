@@ -15,6 +15,9 @@ public:
     };
 public:
     QList<UserResult> userQueue;
+    QList<TokenResult> refreshQueue;
+    bool deferRefresh = false;
+    QList<std::function<void(TokenResult)>> refreshPending;
 
     void requestDeviceCode(const QString &, std::function<void(DeviceCodeResult)> callback) override
     {
@@ -30,9 +33,30 @@ public:
     void refreshAccessToken(const QString &, const QString &,
                             std::function<void(TokenResult)> callback) override
     {
+        if (deferRefresh) {
+            refreshPending.append(callback);
+            return;
+        }
+        if (!refreshQueue.isEmpty()) {
+            callback(refreshQueue.takeFirst());
+            return;
+        }
         TokenResult result;
         result.transportError = QStringLiteral("unused");
         callback(result);
+    }
+    void fireRefresh()
+    {
+        while (!refreshPending.isEmpty()) {
+            auto callback = refreshPending.takeFirst();
+            if (!refreshQueue.isEmpty()) {
+                callback(refreshQueue.takeFirst());
+            } else {
+                TokenResult result;
+                result.transportError = QStringLiteral("unused");
+                callback(result);
+            }
+        }
     }
     void fetchUserLogin(const QString &, std::function<void(UserResult)> callback) override
     {
@@ -159,6 +183,7 @@ private Q_SLOTS:
     void logoutMidLoadDiscardsResult();
     void logoutClearsList();
     void logoutClearsRepoFilter();
+    void refreshPreservesIssues();
     void signedOutReloadErrors();
 };
 
@@ -430,6 +455,55 @@ void IssueControllerTest::logoutClearsRepoFilter()
     QVERIFY(controller.repoFilter().isEmpty());
     QCOMPARE(controller.loadedCount(), 0);
     QCOMPARE(controller.visibleCount(), 0);
+}
+
+void IssueControllerTest::refreshPreservesIssues()
+{
+    // A token refresh is transient: neither the Refreshing state nor the
+    // return to Authenticated may discard valid issue state, and success
+    // must not trigger a redundant reload.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    auto *network = new TinyAuthNetwork(this);
+    auto *store = new InMemorySecureStore(this);
+    StoredTokens tokens;
+    tokens.accessToken = QStringLiteral("tok");
+    tokens.refreshToken = QStringLiteral("ref");
+    tokens.login = QStringLiteral("octocat");
+    store->save(tokens);
+    IAuthNetwork::UserResult user;
+    user.ok = true;
+    user.login = QStringLiteral("octocat");
+    network->userQueue.append(user);
+    network->userQueue.append(user);
+    IAuthNetwork::TokenResult refreshed;
+    refreshed.ok = true;
+    refreshed.data.hasToken = true;
+    refreshed.data.accessToken = QStringLiteral("tok2");
+    refreshed.data.refreshToken = QStringLiteral("ref2");
+    refreshed.data.expiresInSeconds = 3600;
+    network->refreshQueue.append(refreshed);
+    network->deferRefresh = true;
+    auto *auth = new AuthSession(network, store, this);
+    auth->setClientId(QStringLiteral("cid"));
+    auth->restore();
+    QVERIFY(auth->isAuthenticated());
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    const int requestsAfterLoad = api.requestedUrls.size();
+    auth->refreshSession();
+    QCOMPARE(auth->status(), AuthSession::Refreshing);
+    // Transient renewal: the loaded list survives untouched.
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.errorMessage().isEmpty());
+    network->fireRefresh();
+    QVERIFY(auth->isAuthenticated());
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.errorMessage().isEmpty());
+    QCOMPARE(api.requestedUrls.size(), requestsAfterLoad);
 }
 
 void IssueControllerTest::signedOutReloadErrors()
