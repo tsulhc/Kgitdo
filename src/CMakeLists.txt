@@ -11,6 +11,7 @@ add_library(kgitdoauth STATIC
     QNetworkAuthTransport.cpp
     QNetworkAuthTransport.h
     SecureStore.h
+    WalletBackend.h
 )
 
 target_include_directories(kgitdoauth PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

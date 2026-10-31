@@ -139,6 +139,48 @@ QByteArray refreshRequestJson(const QString &clientId, const QString &refreshTok
     return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 
+bool parseOAuthErrorBody(const QByteArray &body, TokenPollData *out, QString *errorString)
+{
+    if (body.isEmpty()) {
+        if (errorString) {
+            *errorString = QStringLiteral("Empty error response.");
+        }
+        return false;
+    }
+    TokenPollData data;
+    QString parseError;
+    if (!parseTokenPollResponse(body, &data, &parseError)) {
+        if (errorString) {
+            *errorString = parseError;
+        }
+        return false;
+    }
+    if (data.hasToken || data.errorCode.isEmpty()) {
+        if (errorString) {
+            *errorString = QStringLiteral("Response is not an OAuth error.");
+        }
+        return false;
+    }
+    if (out) {
+        *out = data;
+    }
+    return true;
+}
+
+QString httpFailureText(int httpStatus, const QString &networkText)
+{
+    if (httpStatus == 429) {
+        return QStringLiteral("GitHub rate limit reached. Wait a little and retry.");
+    }
+    if (!networkText.isEmpty()) {
+        return networkText;
+    }
+    if (httpStatus != 0) {
+        return QStringLiteral("GitHub request failed (HTTP %1). Please retry.").arg(httpStatus);
+    }
+    return QStringLiteral("Network request failed. Check your connection and retry.");
+}
+
 bool isTransientPollError(const QString &errorCode)
 {
     return errorCode == QLatin1String("authorization_pending") || errorCode == QLatin1String("slow_down");

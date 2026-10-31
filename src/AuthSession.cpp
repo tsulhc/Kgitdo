@@ -141,13 +141,15 @@ void AuthSession::logout()
     stopPollTimer();
     clearDeviceState();
     clearTokens();
-    if (m_secureStore) {
-        m_secureStore->clear();
-    }
-    m_volatileStore.clear();
+    const bool cleared = clearPersistedTokens();
     m_volatileSession = false;
     Q_EMIT volatileSessionChanged();
-    setError(QString());
+    if (cleared) {
+        setError(QString());
+    } else {
+        setError(QStringLiteral("Signed out, but saved credentials could not be removed. "
+                                "Retry logout once the wallet is available."));
+    }
     setPending(false);
     setStatus(SignedOut);
 }
@@ -324,6 +326,15 @@ void AuthSession::persistCurrentTokens()
     Q_EMIT secureStorageChanged();
 }
 
+bool AuthSession::clearPersistedTokens()
+{
+    m_volatileStore.clear();
+    if (m_secureStore) {
+        return m_secureStore->clear();
+    }
+    return true;
+}
+
 void AuthSession::handleDeviceCodeResult(int attemptId, const IAuthNetwork::DeviceCodeResult &result)
 {
     if (attemptId != m_attemptId) {
@@ -430,14 +441,16 @@ void AuthSession::handleRefreshResult(int attemptId, const IAuthNetwork::TokenRe
     if (code == QLatin1String("bad_refresh_token")) {
         ++m_attemptId;
         clearTokens();
-        if (m_secureStore) {
-            m_secureStore->clear();
-        }
-        m_volatileStore.clear();
+        const bool cleared = clearPersistedTokens();
         m_volatileSession = false;
         Q_EMIT volatileSessionChanged();
         setPending(false);
-        setError(QStringLiteral("Session expired. Please sign in again."));
+        if (cleared) {
+            setError(QStringLiteral("Session expired. Please sign in again."));
+        } else {
+            setError(QStringLiteral("Session expired. Please sign in again. "
+                                    "Saved credentials could not be removed; please sign out again to retry."));
+        }
         setStatus(SignedOut);
         return;
     }
@@ -477,14 +490,16 @@ void AuthSession::handleUserResult(int attemptId, const IAuthNetwork::UserResult
         stopPollTimer();
         clearDeviceState();
         clearTokens();
-        if (m_secureStore) {
-            m_secureStore->clear();
-        }
-        m_volatileStore.clear();
+        const bool cleared = clearPersistedTokens();
         m_volatileSession = false;
         Q_EMIT volatileSessionChanged();
         setPending(false);
-        setError(QStringLiteral("Session was revoked or expired. Please sign in again."));
+        if (cleared) {
+            setError(QStringLiteral("Session was revoked or expired. Please sign in again."));
+        } else {
+            setError(QStringLiteral("Session was revoked or expired. Please sign in again. "
+                                    "Saved credentials could not be removed; please sign out again to retry."));
+        }
         setStatus(SignedOut);
         return;
     }

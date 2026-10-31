@@ -51,6 +51,15 @@ QByteArray deviceCodeRequestJson(const QString &clientId);
 QByteArray tokenPollRequestJson(const QString &clientId, const QString &deviceCode);
 QByteArray refreshRequestJson(const QString &clientId, const QString &refreshToken);
 
+// Parse an OAuth-style {"error": "...", "error_description": "..."} body.
+// True only for structured error objects (no token present); used when an
+// endpoint answers an HTTP error status with a JSON body, e.g. HTTP 400
+// {"error":"bad_refresh_token"} from the token endpoint.
+bool parseOAuthErrorBody(const QByteArray &body, TokenPollData *out, QString *errorString);
+
+// User-facing text when no structured body exists. Honors HTTP 429.
+QString httpFailureText(int httpStatus, const QString &networkText);
+
 // Error classification for poll responses.
 bool isTransientPollError(const QString &errorCode); // authorization_pending, slow_down
 bool isExpiredPollError(const QString &errorCode); // expired_token, token_expired, bad_verification_code

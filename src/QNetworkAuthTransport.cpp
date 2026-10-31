@@ -42,6 +42,75 @@ QString networkFailureText(QNetworkReply *reply)
 }
 } // namespace
 
+namespace AuthHttpMapping
+{
+
+IAuthNetwork::TokenResult mapTokenResponse(int httpStatus, const QByteArray &body, bool networkError,
+                                            const QString &networkText)
+{
+    IAuthNetwork::TokenResult result;
+    result.httpStatus = httpStatus;
+    // Honor structured bodies on any status: GitHub OAuth errors arrive as
+    // JSON on HTTP 4xx (e.g. bad_refresh_token on HTTP 400), and QNetworkReply
+    // reports those as errors. Only fall back to transport text when no
+    // structured body exists.
+    if (!body.isEmpty()) {
+        DeviceFlowProtocol::TokenPollData data;
+        QString parseError;
+        if (DeviceFlowProtocol::parseTokenPollResponse(body, &data, &parseError)) {
+            result.ok = data.hasToken;
+            result.data = data;
+            return result;
+        }
+        if (!networkError) {
+            result.ok = false;
+            result.transportError = parseError;
+            return result;
+        }
+    }
+    result.ok = false;
+    result.transportError = DeviceFlowProtocol::httpFailureText(httpStatus, networkText);
+    return result;
+}
+
+IAuthNetwork::DeviceCodeResult mapDeviceCodeResponse(int httpStatus, const QByteArray &body,
+                                                     bool networkError, const QString &networkText)
+{
+    IAuthNetwork::DeviceCodeResult result;
+    result.httpStatus = httpStatus;
+    if (!body.isEmpty()) {
+        DeviceFlowProtocol::DeviceCodeData data;
+        QString parseError;
+        if (DeviceFlowProtocol::parseDeviceCodeResponse(body, &data, &parseError)) {
+            result.ok = true;
+            result.data = data;
+            return result;
+        }
+        if (!networkError) {
+            result.ok = false;
+            result.errorString = parseError;
+            return result;
+        }
+        // HTTP error with a body: surface a structured OAuth error instead of
+        // a generic network message (e.g. incorrect_client_credentials).
+        DeviceFlowProtocol::TokenPollData oauthError;
+        if (httpStatus != 0
+            && DeviceFlowProtocol::parseOAuthErrorBody(body, &oauthError, nullptr)) {
+            result.ok = false;
+            result.errorString = !oauthError.errorDescription.isEmpty()
+                ? oauthError.errorDescription
+                : QStringLiteral("GitHub rejected the sign-in request (%1). Please retry.")
+                      .arg(oauthError.errorCode);
+            return result;
+        }
+    }
+    result.ok = false;
+    result.errorString = DeviceFlowProtocol::httpFailureText(httpStatus, networkText);
+    return result;
+}
+
+} // namespace AuthHttpMapping
+
 class QNetworkAuthTransport::Private
 {
 public:
@@ -66,27 +135,11 @@ void QNetworkAuthTransport::requestDeviceCode(const QString &clientId,
     QNetworkRequest request = makeJsonPost(QUrl(QStringLiteral("https://github.com/login/device/code")));
     QNetworkReply *reply = d->nam.post(request, DeviceFlowProtocol::deviceCodeRequestJson(clientId));
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
-        DeviceCodeResult result;
-        result.httpStatus = 0;
-        if (reply->error() != QNetworkReply::NoError) {
-            result.ok = false;
-            result.errorString = networkFailureText(reply);
-            const auto cb = callback;
-            reply->deleteLater();
-            cb(result);
-            return;
-        }
-        result.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray body = reply->readAll();
-        DeviceFlowProtocol::DeviceCodeData data;
-        QString parseError;
-        if (!DeviceFlowProtocol::parseDeviceCodeResponse(body, &data, &parseError)) {
-            result.ok = false;
-            result.errorString = parseError;
-        } else {
-            result.ok = true;
-            result.data = data;
-        }
+        const bool networkError = (reply->error() != QNetworkReply::NoError);
+        DeviceCodeResult result =
+            AuthHttpMapping::mapDeviceCodeResponse(httpStatus, body, networkError, networkFailureText(reply));
         const auto cb = callback;
         reply->deleteLater();
         cb(result);
@@ -100,30 +153,11 @@ void QNetworkAuthTransport::pollAccessToken(const QString &clientId, const QStri
     QNetworkReply *reply =
         d->nam.post(request, DeviceFlowProtocol::tokenPollRequestJson(clientId, deviceCode));
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
-        TokenResult result;
-        if (reply->error() != QNetworkReply::NoError) {
-            result.ok = false;
-            result.transportError = networkFailureText(reply);
-            result.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            const auto cb = callback;
-            reply->deleteLater();
-            cb(result);
-            return;
-        }
-        result.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray body = reply->readAll();
-        DeviceFlowProtocol::TokenPollData data;
-        QString parseError;
-        if (!DeviceFlowProtocol::parseTokenPollResponse(body, &data, &parseError)) {
-            result.ok = false;
-            result.transportError = parseError;
-        } else if (data.hasToken) {
-            result.ok = true;
-            result.data = data;
-        } else {
-            result.ok = false;
-            result.data = data;
-        }
+        const bool networkError = (reply->error() != QNetworkReply::NoError);
+        TokenResult result =
+            AuthHttpMapping::mapTokenResponse(httpStatus, body, networkError, networkFailureText(reply));
         const auto cb = callback;
         reply->deleteLater();
         cb(result);
@@ -137,30 +171,11 @@ void QNetworkAuthTransport::refreshAccessToken(const QString &clientId, const QS
     QNetworkReply *reply =
         d->nam.post(request, DeviceFlowProtocol::refreshRequestJson(clientId, refreshToken));
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
-        TokenResult result;
-        if (reply->error() != QNetworkReply::NoError) {
-            result.ok = false;
-            result.transportError = networkFailureText(reply);
-            result.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            const auto cb = callback;
-            reply->deleteLater();
-            cb(result);
-            return;
-        }
-        result.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray body = reply->readAll();
-        DeviceFlowProtocol::TokenPollData data;
-        QString parseError;
-        if (!DeviceFlowProtocol::parseTokenPollResponse(body, &data, &parseError)) {
-            result.ok = false;
-            result.transportError = parseError;
-        } else if (data.hasToken) {
-            result.ok = true;
-            result.data = data;
-        } else {
-            result.ok = false;
-            result.data = data;
-        }
+        const bool networkError = (reply->error() != QNetworkReply::NoError);
+        TokenResult result =
+            AuthHttpMapping::mapTokenResponse(httpStatus, body, networkError, networkFailureText(reply));
         const auto cb = callback;
         reply->deleteLater();
         cb(result);

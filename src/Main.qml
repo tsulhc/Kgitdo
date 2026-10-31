@@ -235,7 +235,7 @@ Kirigami.ApplicationWindow {
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
-                            visible: isFailed && authSession.errorMessage.length > 0
+                            visible: authSession.errorMessage.length > 0
                             text: authSession.errorMessage
                         }
                         Controls.Button {

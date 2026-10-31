@@ -11,14 +11,111 @@ constexpr char kExpiresKey[] = "accessExpiresAt";
 constexpr char kLoginKey[] = "login";
 } // namespace
 
-KWalletSecureStore::KWalletSecureStore(QObject *parent)
+// Production KWallet backend. Removal success is verified by read-back so a
+// failed removal is never reported as cleared, regardless of how the
+// underlying removeEntry call reports its result.
+class KWalletBackend : public IWalletBackend
+{
+public:
+    explicit KWalletBackend(QObject *parent = nullptr)
+        : IWalletBackend(parent)
+    {
+    }
+
+    bool isEnabled() const override
+    {
+        return KWallet::Wallet::isEnabled();
+    }
+
+    bool open() override
+    {
+        close();
+        if (!KWallet::Wallet::isEnabled()) {
+            return false;
+        }
+        m_wallet = KWallet::Wallet::openWallet(KWallet::Wallet::NetworkWallet(), 0,
+                                               KWallet::Wallet::Synchronous);
+        return m_wallet && m_wallet->isOpen();
+    }
+
+    void close() override
+    {
+        delete m_wallet;
+        m_wallet = nullptr;
+    }
+
+    bool selectFolder(bool createIfMissing) override
+    {
+        if (!m_wallet) {
+            return false;
+        }
+        if (!m_wallet->hasFolder(QLatin1String(kFolder))) {
+            if (!createIfMissing) {
+                return false;
+            }
+            m_wallet->createFolder(QLatin1String(kFolder));
+        }
+        return m_wallet->hasFolder(QLatin1String(kFolder))
+            && m_wallet->setFolder(QLatin1String(kFolder));
+    }
+
+    bool readSecret(const QString &key, QString &value) override
+    {
+        if (!m_wallet) {
+            return false;
+        }
+        return m_wallet->readPassword(key, value) == 0;
+    }
+
+    bool readBlob(const QString &key, QByteArray &value) override
+    {
+        if (!m_wallet) {
+            return false;
+        }
+        return m_wallet->readEntry(key, value) == 0;
+    }
+
+    bool writeSecret(const QString &key, const QString &value) override
+    {
+        if (!m_wallet) {
+            return false;
+        }
+        return m_wallet->writePassword(key, value) == 0;
+    }
+
+    bool writeBlob(const QString &key, const QByteArray &value) override
+    {
+        if (!m_wallet) {
+            return false;
+        }
+        return m_wallet->writeEntry(key, value) == 0;
+    }
+
+    bool remove(const QString &key) override
+    {
+        if (!m_wallet) {
+            return false;
+        }
+        m_wallet->removeEntry(key);
+        // Verify the key is really gone instead of trusting the removal call.
+        QString secret;
+        QByteArray blob;
+        return m_wallet->readPassword(key, secret) != 0 && m_wallet->readEntry(key, blob) != 0;
+    }
+
+private:
+    KWallet::Wallet *m_wallet = nullptr;
+};
+
+KWalletSecureStore::KWalletSecureStore(QObject *parent, IWalletBackend *backend)
     : ISecureStore(parent)
+    , m_backend(backend ? backend : new KWalletBackend(this))
 {
 }
 
 bool KWalletSecureStore::isAvailable() const
 {
-    return KWallet::Wallet::isEnabled();
+    return m_backend && m_backend->isEnabled();
 }
 
 QString KWalletSecureStore::backendName() const
@@ -28,88 +125,87 @@ QString KWalletSecureStore::backendName() const
 
 bool KWalletSecureStore::load(StoredTokens &out)
 {
-    if (!KWallet::Wallet::isEnabled()) {
+    if (!m_backend || !m_backend->isEnabled()) {
         return false;
     }
-    KWallet::Wallet *wallet =
-        KWallet::Wallet::openWallet(KWallet::Wallet::NetworkWallet(), 0, KWallet::Wallet::Synchronous);
-    if (!wallet || !wallet->isOpen()) {
-        delete wallet;
+    if (!m_backend->open()) {
         return false;
     }
     bool loaded = false;
-    if (!wallet->hasFolder(QLatin1String(kFolder))) {
-        delete wallet;
-        return false;
-    }
-    if (wallet->setFolder(QLatin1String(kFolder))) {
+    if (m_backend->selectFolder(false)) {
         QString access;
-        QString refresh;
-        QString login;
-        QByteArray expiresRaw;
-        if (wallet->readPassword(QLatin1String(kAccessKey), access) == 0 && !access.isEmpty()) {
-            wallet->readPassword(QLatin1String(kRefreshKey), refresh);
-            wallet->readPassword(QLatin1String(kLoginKey), login);
+        if (m_backend->readSecret(QLatin1String(kAccessKey), access) && !access.isEmpty()) {
+            StoredTokens tokens;
+            QString refresh;
+            QString login;
+            QByteArray expiresRaw;
+            m_backend->readSecret(QLatin1String(kRefreshKey), refresh);
+            m_backend->readSecret(QLatin1String(kLoginKey), login);
             qint64 expiresAt = 0;
-            if (wallet->readEntry(QLatin1String(kExpiresKey), expiresRaw) == 0 && !expiresRaw.isEmpty()) {
+            if (m_backend->readBlob(QLatin1String(kExpiresKey), expiresRaw) && !expiresRaw.isEmpty()) {
                 expiresAt = expiresRaw.toLongLong();
             }
-            out.accessToken = access;
-            out.refreshToken = refresh;
-            out.accessExpiresAtSecsSinceEpoch = expiresAt;
-            out.login = login;
+            tokens.accessToken = access;
+            tokens.refreshToken = refresh;
+            tokens.accessExpiresAtSecsSinceEpoch = expiresAt;
+            tokens.login = login;
+            out = tokens;
             loaded = true;
         }
     }
-    delete wallet;
+    m_backend->close();
     return loaded;
 }
 
 bool KWalletSecureStore::save(const StoredTokens &tokens)
 {
-    if (!KWallet::Wallet::isEnabled() || tokens.accessToken.isEmpty()) {
+    if (!m_backend || !m_backend->isEnabled() || tokens.accessToken.isEmpty()) {
         return false;
     }
-    KWallet::Wallet *wallet =
-        KWallet::Wallet::openWallet(KWallet::Wallet::NetworkWallet(), 0, KWallet::Wallet::Synchronous);
-    if (!wallet || !wallet->isOpen()) {
-        delete wallet;
+    if (!m_backend->open()) {
         return false;
     }
     bool ok = false;
-    if (!wallet->hasFolder(QLatin1String(kFolder))) {
-        wallet->createFolder(QLatin1String(kFolder));
+    if (m_backend->selectFolder(true)) {
+        const bool accessOk =
+            m_backend->writeSecret(QLatin1String(kAccessKey), tokens.accessToken);
+        const bool refreshOk =
+            m_backend->writeSecret(QLatin1String(kRefreshKey), tokens.refreshToken);
+        const bool loginOk = m_backend->writeSecret(QLatin1String(kLoginKey), tokens.login);
+        const bool expiresOk = m_backend->writeBlob(
+            QLatin1String(kExpiresKey), QByteArray::number(tokens.accessExpiresAtSecsSinceEpoch));
+        ok = accessOk && refreshOk && loginOk && expiresOk;
+        if (!ok) {
+            // Roll back partial writes: never leave mixed or half-rotated
+            // credentials behind for a later launch to pick up.
+            m_backend->remove(QLatin1String(kAccessKey));
+            m_backend->remove(QLatin1String(kRefreshKey));
+            m_backend->remove(QLatin1String(kExpiresKey));
+            m_backend->remove(QLatin1String(kLoginKey));
+        }
     }
-    if (wallet->hasFolder(QLatin1String(kFolder)) && wallet->setFolder(QLatin1String(kFolder))) {
-        const int accessRc = wallet->writePassword(QLatin1String(kAccessKey), tokens.accessToken);
-        const int refreshRc = wallet->writePassword(QLatin1String(kRefreshKey), tokens.refreshToken);
-        const int loginRc = wallet->writePassword(QLatin1String(kLoginKey), tokens.login);
-        const int expiresRc = wallet->writeEntry(QLatin1String(kExpiresKey),
-                                                 QByteArray::number(tokens.accessExpiresAtSecsSinceEpoch));
-        ok = (accessRc == 0 && refreshRc == 0 && loginRc == 0 && expiresRc == 0);
-    }
-    delete wallet;
+    m_backend->close();
     return ok;
 }
 
 bool KWalletSecureStore::clear()
 {
-    if (!KWallet::Wallet::isEnabled()) {
+    if (!m_backend || !m_backend->isEnabled()) {
+        // Wallet service absent: nothing could have been persisted here.
         return true;
     }
-    KWallet::Wallet *wallet =
-        KWallet::Wallet::openWallet(KWallet::Wallet::NetworkWallet(), 0, KWallet::Wallet::Synchronous);
-    if (!wallet || !wallet->isOpen()) {
-        delete wallet;
-        // Nothing persisted that we can remove; local memory is cleared anyway.
-        return true;
+    // Wallet enabled but not openable: credentials may remain, so report
+    // failure instead of claiming a logout that cannot be verified.
+    if (!m_backend->open()) {
+        return false;
     }
-    if (wallet->hasFolder(QLatin1String(kFolder)) && wallet->setFolder(QLatin1String(kFolder))) {
-        wallet->removeEntry(QLatin1String(kAccessKey));
-        wallet->removeEntry(QLatin1String(kRefreshKey));
-        wallet->removeEntry(QLatin1String(kExpiresKey));
-        wallet->removeEntry(QLatin1String(kLoginKey));
+    bool ok = true;
+    if (m_backend->selectFolder(false)) {
+        ok = m_backend->remove(QLatin1String(kAccessKey)) && ok;
+        ok = m_backend->remove(QLatin1String(kRefreshKey)) && ok;
+        ok = m_backend->remove(QLatin1String(kExpiresKey)) && ok;
+        ok = m_backend->remove(QLatin1String(kLoginKey)) && ok;
     }
-    delete wallet;
-    return true;
+    m_backend->close();
+    return ok;
 }

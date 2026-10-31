@@ -3,21 +3,27 @@
 #include <QObject>
 
 #include "SecureStore.h"
+#include "WalletBackend.h"
 
 // KWallet-backed persistence (KF6). Tokens live in the wallet folder
 // "Kgitdo"; nothing is written to plain files, QSettings, or logs.
-// When the wallet service is disabled, absent, or refuses to open, every
-// operation reports failure and AuthSession falls back to a volatile
-// in-memory session with an explicit UI notice.
+// Save rolls back partial writes so a failed persist never leaves mixed
+// credentials behind; clear reports failure when entries may remain, so
+// callers never claim a logout they cannot verify.
+// An injected backend is not owned (tests pass stack instances); when
+// omitted, the store creates and owns a KWallet backend.
 class KWalletSecureStore : public ISecureStore
 {
     Q_OBJECT
 public:
-    explicit KWalletSecureStore(QObject *parent = nullptr);
+    explicit KWalletSecureStore(QObject *parent = nullptr, IWalletBackend *backend = nullptr);
 
     bool isAvailable() const override;
     QString backendName() const override;
     bool load(StoredTokens &out) override;
     bool save(const StoredTokens &tokens) override;
     bool clear() override;
+
+private:
+    IWalletBackend *m_backend = nullptr;
 };

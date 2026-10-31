@@ -160,6 +160,42 @@ public:
     }
 };
 
+// Test double simulating a wallet whose entries cannot be removed
+// (locked wallet, removal failure): persistence operations fail the
+// way FailingSecureStore models absence, but clear() reports failure.
+class ClearFailingStore : public ISecureStore
+{
+public:
+    explicit ClearFailingStore(QObject *parent = nullptr)
+        : ISecureStore(parent)
+    {
+    }
+
+    bool isAvailable() const override
+    {
+        return true;
+    }
+    QString backendName() const override
+    {
+        return QStringLiteral("clear-failing");
+    }
+    bool load(StoredTokens &out) override
+    {
+        return m_inner.load(out);
+    }
+    bool save(const StoredTokens &tokens) override
+    {
+        return m_inner.save(tokens);
+    }
+    bool clear() override
+    {
+        return false;
+    }
+
+private:
+    InMemorySecureStore m_inner;
+};
+
 class AuthSessionTest : public QObject
 {
     Q_OBJECT
@@ -181,6 +217,9 @@ private Q_SLOTS:
     void userUnauthorizedClearsSession();
     void missingClientIdFails();
     void networkErrorDuringPollIsRetryable();
+    void logoutWithUnremovableWalletWarns();
+    void revokedSessionWithUnremovableWalletWarns();
+    void badRefreshWithUnremovableWalletWarns();
 };
 
 void AuthSessionTest::loginSuccessAfterPending()
@@ -481,6 +520,70 @@ void AuthSessionTest::networkErrorDuringPollIsRetryable()
     session.retry();
     QCOMPARE(session.status(), AuthSession::AwaitingAuthorization);
     QCOMPARE(net.deviceRequests, 2);
+}
+
+void AuthSessionTest::logoutWithUnremovableWalletWarns()
+{
+    // Regression: logout claimed success even when stored credentials could
+    // not be removed. Memory must still be cleared, but the UI must warn.
+    FakeAuthNetwork net;
+    ClearFailingStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makeTokenOk();
+    net.userQueue << FakeAuthNetwork::makeUserOk();
+
+    session.startLogin();
+    session.pollOnce();
+    QCOMPARE(session.status(), AuthSession::Authenticated);
+    session.logout();
+    QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(session.userLogin().isEmpty());
+    QVERIFY(session.accessTokenForTesting().isEmpty());
+    QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed"), Qt::CaseInsensitive));
+}
+
+void AuthSessionTest::revokedSessionWithUnremovableWalletWarns()
+{
+    FakeAuthNetwork net;
+    ClearFailingStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makeTokenOk();
+    net.userQueue << FakeAuthNetwork::makeUserUnauthorized();
+
+    session.startLogin();
+    session.pollOnce();
+    QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(session.errorMessage().contains(QStringLiteral("revoked"), Qt::CaseInsensitive));
+    QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed"), Qt::CaseInsensitive));
+}
+
+void AuthSessionTest::badRefreshWithUnremovableWalletWarns()
+{
+    FakeAuthNetwork net;
+    ClearFailingStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makeTokenOk();
+    net.userQueue << FakeAuthNetwork::makeUserOk();
+
+    session.startLogin();
+    session.pollOnce();
+    QCOMPARE(session.status(), AuthSession::Authenticated);
+
+    IAuthNetwork::TokenResult bad;
+    bad.ok = false;
+    bad.data.hasToken = false;
+    bad.data.errorCode = QStringLiteral("bad_refresh_token");
+    net.refreshQueue << bad;
+    session.refreshSession();
+    QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(session.errorMessage().contains(QStringLiteral("sign in"), Qt::CaseInsensitive));
+    QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed"), Qt::CaseInsensitive));
 }
 
 QTEST_MAIN(AuthSessionTest)

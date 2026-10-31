@@ -101,6 +101,10 @@ private:
     bool isAccessExpired() const;
     qint64 nowSecs() const;
     void persistCurrentTokens();
+    // Clears the volatile fallback and the secure store. True when nothing
+    // may remain: callers must warn instead of claiming a clean logout
+    // when this returns false.
+    bool clearPersistedTokens();
     void handleDeviceCodeResult(int attemptId, const IAuthNetwork::DeviceCodeResult &result);
     void handlePollResult(int attemptId, const IAuthNetwork::TokenResult &result);
     void handleRefreshResult(int attemptId, const IAuthNetwork::TokenResult &result);
