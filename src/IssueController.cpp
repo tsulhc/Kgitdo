@@ -79,12 +79,21 @@ void IssueController::reload()
                                                                 : IssueQuery::State::Open;
     const QString token = m_auth->currentAccessToken();
     const QString login = m_auth->userLogin();
+    const int viewAtStart = m_view;
+    const int stateAtStart = m_issueState;
     setLoading(true);
     m_errorMessage.clear();
     Q_EMIT errorMessageChanged();
     m_client->fetchIssues(view, state, token, login,
-                          [this](const GitHubClient::FetchResult &result) {
+                          [this, viewAtStart, stateAtStart](const GitHubClient::FetchResult &result) {
                               setLoading(false);
+                              if (m_view != viewAtStart || m_issueState != stateAtStart) {
+                                  // Selection changed mid-load: this data
+                                  // belongs to the old selection. Discard it
+                                  // and fetch once for the current one.
+                                  reload();
+                                  return;
+                              }
                               m_incomplete = result.incomplete;
                               m_capped = result.capped;
                               m_truncated = result.truncated;

@@ -155,6 +155,7 @@ private Q_SLOTS:
     void partialDataWarns();
     void incompleteWarns();
     void concurrentReloadGuarded();
+    void viewChangeMidLoadRefetches();
     void logoutClearsList();
     void signedOutReloadErrors();
 };
@@ -336,6 +337,33 @@ void IssueControllerTest::concurrentReloadGuarded()
     api.fireAll();
     QVERIFY(!controller.loading());
     QCOMPARE(controller.loadedCount(), 1);
+}
+
+void IssueControllerTest::viewChangeMidLoadRefetches()
+{
+    // Switching view while a fetch is in flight must not leave data from
+    // the old selection on screen: the stale result is discarded and the
+    // current selection is fetched once it completes.
+    FakeIssueApi api;
+    api.defer = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "Old", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.queue.append(httpOk(pageJson({itemJson(2, 2, "New", "o/r")})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload(); // All: author query in flight
+    QVERIFY(controller.loading());
+    controller.setView(IssueController::ViewAssigned); // dropped: loading
+    api.fireAll();
+    QVERIFY(!controller.loading());
+    QCOMPARE(api.requestedUrls.size(), 3); // author + assignee + assigned
+    QVERIFY(api.requestedUrls.at(2).query().contains(QStringLiteral("assignee")));
+    QCOMPARE(controller.loadedCount(), 1);
+    QCOMPARE(controller.model()
+                 ->data(controller.model()->index(0), IssueListModel::TitleRole)
+                 .toString(),
+             QStringLiteral("New"));
 }
 
 void IssueControllerTest::logoutClearsList()
