@@ -162,6 +162,7 @@ private Q_SLOTS:
     void clearApiFailureWithUnreadableStateReportsFailure();
     void clearStaleListingWithUnreadableStateReportsFailure();
     void clearAbsentKeysDespiteApiErrorsReportsSuccess();
+    void clearDisabledAfterSaveReportsFailure();
     void removePolicyDecisionTable();
     void disabledBackendLoadSaveFailClearSucceeds();
 };
@@ -401,6 +402,25 @@ void WalletStoreTest::clearAbsentKeysDespiteApiErrorsReportsSuccess()
     backend.failingRemoves.insert(QStringLiteral("login"));
     backend.failingRemoves.insert(QStringLiteral("committed"));
     KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.clear());
+}
+
+void WalletStoreTest::clearDisabledAfterSaveReportsFailure()
+{
+    // Regression: clear() trusted a disabled wallet. A wallet can be
+    // disabled after saving, so a store that has persisted credentials must
+    // fail closed once removal can no longer be verified. Re-enabling
+    // restores the verifiable (and retryable) path.
+    FakeBackend backend;
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.save(makeTokens()));
+    backend.enabled = false;
+    QVERIFY(!store.isAvailable());
+    QVERIFY(!store.clear());
+    backend.enabled = true;
+    QVERIFY(store.clear());
+    // The verified clear reset the persisted flag: disabling again is clean.
+    backend.enabled = false;
     QVERIFY(store.clear());
 }
 

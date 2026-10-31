@@ -229,14 +229,20 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         }
     }
     m_backend->close();
+    if (ok) {
+        m_hasPersisted = true;
+    }
     return ok;
 }
 
 bool KWalletSecureStore::clear()
 {
     if (!m_backend || !m_backend->isEnabled()) {
-        // Wallet service absent: nothing could have been persisted here.
-        return true;
+        // Service disabled: removal can no longer be verified. Fail closed
+        // if this store instance has persisted credentials (a wallet can be
+        // disabled after saving); only a store that never persisted has
+        // provably nothing left to remove.
+        return !m_hasPersisted;
     }
     // Wallet enabled but not openable: credentials may remain, so report
     // failure instead of claiming a logout that cannot be verified.
@@ -260,5 +266,8 @@ bool KWalletSecureStore::clear()
         ok = m_backend->remove(QLatin1String(kCommitKey)) && ok;
     }
     m_backend->close();
+    if (ok) {
+        m_hasPersisted = false;
+    }
     return ok;
 }
