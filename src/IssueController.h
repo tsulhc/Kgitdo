@@ -138,6 +138,12 @@ private:
     bool m_truncated = false;
     bool m_rateLimited = false;
     int m_retryAfterSecs = 0;
+    // Owner of the current rate-limit outcome: 0 means the fetch path set
+    // it (partial/failed load), otherwise the mutation id whose failure set
+    // it. A mutation success retires the countdown only when it
+    // corresponds to the failure that armed it — never a load-owned or
+    // another mutation's still-relevant outcome.
+    qlonglong m_rateLimitedMutationId = 0;
     QDateTime m_lastRefresh;
     // Login the loaded list belongs to. Compared on each Authenticated
     // transition so a different account signing in without an intermediate

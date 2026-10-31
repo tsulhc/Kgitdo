@@ -121,6 +121,10 @@ void IssueController::reload()
                               m_truncated = result.truncated;
                               m_rateLimited = result.rateLimited;
                               m_retryAfterSecs = result.retryAfterSecs;
+                              // Fetch-owned outcome: a later mutation success
+                              // must not retire it (partial-list or load
+                              // warnings stay until the next load resolves).
+                              m_rateLimitedMutationId = 0;
                               Q_EMIT outcomeChanged();
                               if (!result.ok) {
                                   // A failed load carries no data, so the
@@ -215,6 +219,7 @@ void IssueController::clearOutcomeFlags()
     m_truncated = false;
     m_rateLimited = false;
     m_retryAfterSecs = 0;
+    m_rateLimitedMutationId = 0;
     Q_EMIT outcomeChanged();
 }
 
@@ -342,6 +347,10 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 }
                 m_rateLimited = result.rateLimited;
                 m_retryAfterSecs = result.retryAfterSecs;
+                // This mutation owns the outcome it just set (or cleared by
+                // failing without a rate limit): a later success retires it
+                // only when it is the same mutation's retry.
+                m_rateLimitedMutationId = result.rateLimited ? id : 0;
                 Q_EMIT outcomeChanged();
                 m_warningMessage = result.errorMessage.isEmpty()
                     ? QStringLiteral("Could not update the issue. Please retry.")
@@ -360,13 +369,14 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
             // Success: the server echoed the requested state.
             m_mutationGuard.remove(id);
             // A success proves the server condition behind a previous
-            // mutation failure is over: retire a stale rate-limit outcome
-            // so the countdown cannot linger next to fresh state. Other
-            // warnings (e.g. partial-list notes from the last load) are
-            // load-scoped and stay untouched.
-            if (m_rateLimited) {
+            // mutation failure is over — but only retire the countdown when
+            // this success is that failure's retry. A load-owned outcome
+            // (partial list still on screen) or another mutation's warning
+            // stays until its own owner resolves it.
+            if (m_rateLimited && m_rateLimitedMutationId == id) {
                 m_rateLimited = false;
                 m_retryAfterSecs = 0;
+                m_rateLimitedMutationId = 0;
                 Q_EMIT outcomeChanged();
                 m_warningMessage.clear();
                 Q_EMIT warningChanged();
