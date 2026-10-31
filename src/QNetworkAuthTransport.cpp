@@ -173,7 +173,7 @@ void QNetworkAuthTransport::fetchUserLogin(const QString &accessToken,
     QNetworkRequest request(QUrl(QStringLiteral("https://api.github.com/user")));
     request.setRawHeader("Accept", "application/vnd.github+json");
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
-    request.setRawHeader("Authorization", ("Bearer " + accessToken).toUtf8());
+    request.setRawHeader("Authorization", QByteArray("Bearer ") + accessToken.toUtf8());
     request.setTransferTimeout(kTransferTimeoutMs);
     QNetworkReply *reply = d->nam.get(request);
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {

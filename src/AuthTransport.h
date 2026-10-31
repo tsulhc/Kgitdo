@@ -17,6 +17,7 @@ public:
         bool ok = false;
         DeviceFlowProtocol::DeviceCodeData data;
         QString errorString; // transport/parse error, no secrets
+        int httpStatus = 0;
     };
 
     struct TokenResult {
