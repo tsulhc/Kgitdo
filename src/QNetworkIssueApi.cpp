@@ -15,13 +15,24 @@ QNetworkIssueApi::QNetworkIssueApi(QObject *parent)
 {
 }
 
-void QNetworkIssueApi::searchIssues(const QUrl &url, const QString &accessToken,
-                                    std::function<void(IssueHttpResult)> callback)
+QNetworkRequest QNetworkIssueApi::makeApiRequest(const QUrl &url, const QString &accessToken)
 {
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/vnd.github+json");
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
     request.setRawHeader("Authorization", QByteArray("Bearer ") + accessToken.toUtf8());
+    // Never forward the Bearer token to another origin: only redirects that
+    // stay on the same scheme/host/port are followed automatically. Anything
+    // else surfaces as the 3xx response and is treated as an API error.
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::SameOriginRedirectPolicy);
+    return request;
+}
+
+void QNetworkIssueApi::searchIssues(const QUrl &url, const QString &accessToken,
+                                    std::function<void(IssueHttpResult)> callback)
+{
+    QNetworkRequest request = makeApiRequest(url, accessToken);
 
     QNetworkReply *reply = m_nam->get(request);
     auto *timer = new QTimer(reply);

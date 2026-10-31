@@ -1,6 +1,12 @@
 #include <QtTest>
 
+#include <QEventLoop>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTimer>
+
 #include "GitHubClient.h"
+#include "QNetworkIssueApi.h"
 
 namespace
 {
@@ -94,6 +100,8 @@ private Q_SLOTS:
     void validationAndServerErrors();
     void malformedBody();
     void retryAfterPrefersHeader();
+    void apiRequestPinsSameOriginRedirects();
+    void crossOriginRedirectIsNotFollowed();
 };
 
 void GitHubClientTest::allViewMergesAndDedups()
@@ -361,6 +369,69 @@ void GitHubClientTest::retryAfterPrefersHeader()
                            QVERIFY(result.rateLimited);
                            QCOMPARE(result.retryAfterSecs, 120);
                        });
+}
+
+void GitHubClientTest::apiRequestPinsSameOriginRedirects()
+{
+    const QUrl url(QStringLiteral("https://api.github.com/search/issues?q=x"));
+    const QNetworkRequest request = QNetworkIssueApi::makeApiRequest(url, QStringLiteral("tok"));
+    QCOMPARE(request.url(), url);
+    QCOMPARE(request.rawHeader("Authorization"), QByteArray("Bearer tok"));
+    QCOMPARE(request.rawHeader("Accept"), QByteArray("application/vnd.github+json"));
+    // The Bearer token must never be forwarded to another origin.
+    QCOMPARE(request.attribute(QNetworkRequest::RedirectPolicyAttribute).toInt(),
+             static_cast<int>(QNetworkRequest::SameOriginRedirectPolicy));
+}
+
+void GitHubClientTest::crossOriginRedirectIsNotFollowed()
+{
+    // Trap origin: a different port is a different origin, so the Bearer
+    // token must never arrive here even when instructed via 302 Location.
+    QTcpServer trap;
+    QVERIFY(trap.listen(QHostAddress::LocalHost));
+    const quint16 trapPort = trap.serverPort();
+    int trapHits = 0;
+    connect(&trap, &QTcpServer::newConnection, &trap, [&]() {
+        ++trapHits;
+        if (QTcpSocket *socket = trap.nextPendingConnection()) {
+            socket->deleteLater();
+        }
+    });
+
+    QTcpServer redirector;
+    QVERIFY(redirector.listen(QHostAddress::LocalHost));
+    const quint16 redirectorPort = redirector.serverPort();
+    QByteArray firstHop;
+    connect(&redirector, &QTcpServer::newConnection, &redirector, [&]() {
+        QTcpSocket *socket = redirector.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [socket, trapPort, &firstHop]() {
+            firstHop += socket->readAll();
+            const QByteArray response = "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:"
+                + QByteArray::number(trapPort)
+                + "/trap\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            socket->write(response);
+            socket->disconnectFromHost();
+        });
+    });
+
+    QNetworkIssueApi api;
+    QEventLoop loop;
+    IssueHttpResult got;
+    bool called = false;
+    api.searchIssues(QUrl(QStringLiteral("http://127.0.0.1:%1/start").arg(redirectorPort)),
+                     QStringLiteral("SECRET"), [&](const IssueHttpResult &r) {
+                         got = r;
+                         called = true;
+                         loop.quit();
+                     });
+    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+    loop.exec();
+    QVERIFY(called);
+    // The token went to the intended origin only; the cross-origin redirect
+    // surfaced as the 3xx response instead of being followed.
+    QVERIFY(firstHop.contains("Bearer SECRET"));
+    QCOMPARE(got.httpStatus, 302);
+    QCOMPARE(trapHits, 0);
 }
 
 QTEST_MAIN(GitHubClientTest)

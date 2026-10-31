@@ -18,6 +18,10 @@ QNetworkRequest makeJsonPost(const QUrl &url)
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setRawHeader("Accept", "application/json");
     request.setTransferTimeout(kTransferTimeoutMs);
+    // Same defect class as the issue-API redirect finding: never forward
+    // device-flow credentials to another origin via automatic redirects.
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::SameOriginRedirectPolicy);
     return request;
 }
 
@@ -190,6 +194,9 @@ void QNetworkAuthTransport::fetchUserLogin(const QString &accessToken,
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
     request.setRawHeader("Authorization", QByteArray("Bearer ") + accessToken.toUtf8());
     request.setTransferTimeout(kTransferTimeoutMs);
+    // The Bearer token must never be forwarded to another origin.
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::SameOriginRedirectPolicy);
     QNetworkReply *reply = d->nam.get(request);
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
         UserResult result;
