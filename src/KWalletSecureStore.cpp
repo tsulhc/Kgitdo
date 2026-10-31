@@ -9,6 +9,11 @@ constexpr char kAccessKey[] = "accessToken";
 constexpr char kRefreshKey[] = "refreshToken";
 constexpr char kExpiresKey[] = "accessExpiresAt";
 constexpr char kLoginKey[] = "login";
+// Commit marker, always written last. load() only accepts a token set that
+// carries this marker, so a save interrupted (or rolled back) midway can
+// never be mistaken for a valid session, even if rollback removal fails.
+constexpr char kCommitKey[] = "committed";
+constexpr char kCommitValue[] = "1";
 } // namespace
 
 // Production KWallet backend. Removal success is verified by read-back so a
@@ -57,6 +62,11 @@ public:
         }
         return m_wallet->hasFolder(QLatin1String(kFolder))
             && m_wallet->setFolder(QLatin1String(kFolder));
+    }
+
+    bool folderExists() override
+    {
+        return m_wallet && m_wallet->hasFolder(QLatin1String(kFolder));
     }
 
     bool readSecret(const QString &key, QString &value) override
@@ -133,6 +143,14 @@ bool KWalletSecureStore::load(StoredTokens &out)
     }
     bool loaded = false;
     if (m_backend->selectFolder(false)) {
+        QByteArray commit;
+        if (!m_backend->readBlob(QLatin1String(kCommitKey), commit)
+            || commit != QByteArray(kCommitValue)) {
+            // No commit marker: absent session or interrupted/rolled-back
+            // save. Never accept partial credentials as a session.
+            m_backend->close();
+            return false;
+        }
         QString access;
         if (m_backend->readSecret(QLatin1String(kAccessKey), access) && !access.isEmpty()) {
             StoredTokens tokens;
@@ -174,14 +192,19 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         const bool loginOk = m_backend->writeSecret(QLatin1String(kLoginKey), tokens.login);
         const bool expiresOk = m_backend->writeBlob(
             QLatin1String(kExpiresKey), QByteArray::number(tokens.accessExpiresAtSecsSinceEpoch));
-        ok = accessOk && refreshOk && loginOk && expiresOk;
+        const bool commitOk =
+            m_backend->writeBlob(QLatin1String(kCommitKey), QByteArray(kCommitValue));
+        ok = accessOk && refreshOk && loginOk && expiresOk && commitOk;
         if (!ok) {
             // Roll back partial writes: never leave mixed or half-rotated
-            // credentials behind for a later launch to pick up.
+            // credentials behind for a later launch to pick up. Removal is
+            // best effort; load() additionally requires the commit marker,
+            // so even a failed rollback cannot produce an accepted session.
             m_backend->remove(QLatin1String(kAccessKey));
             m_backend->remove(QLatin1String(kRefreshKey));
             m_backend->remove(QLatin1String(kExpiresKey));
             m_backend->remove(QLatin1String(kLoginKey));
+            m_backend->remove(QLatin1String(kCommitKey));
         }
     }
     m_backend->close();
@@ -199,12 +222,20 @@ bool KWalletSecureStore::clear()
     if (!m_backend->open()) {
         return false;
     }
-    bool ok = true;
-    if (m_backend->selectFolder(false)) {
+    bool ok = false;
+    if (!m_backend->folderExists()) {
+        // No folder: nothing was ever persisted here.
+        ok = true;
+    } else if (!m_backend->selectFolder(false)) {
+        // Folder exists but cannot be selected: credentials may remain, so
+        // report failure instead of claiming a logout that cannot be verified.
+        ok = false;
+    } else {
         ok = m_backend->remove(QLatin1String(kAccessKey)) && ok;
         ok = m_backend->remove(QLatin1String(kRefreshKey)) && ok;
         ok = m_backend->remove(QLatin1String(kExpiresKey)) && ok;
         ok = m_backend->remove(QLatin1String(kLoginKey)) && ok;
+        ok = m_backend->remove(QLatin1String(kCommitKey)) && ok;
     }
     m_backend->close();
     return ok;

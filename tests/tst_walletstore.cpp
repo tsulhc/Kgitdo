@@ -12,9 +12,10 @@ class FakeBackend : public IWalletBackend
 {
 public:
     bool enabled = true;
-    bool folderExists = false;
+    bool hasFolder = false;
     bool failOpen = false;
     bool failSelect = false;
+    int selectCalls = 0;
     QMap<QString, QByteArray> entries;
     QSet<QString> failingWrites;
     QSet<QString> failingRemoves;
@@ -41,16 +42,22 @@ public:
 
     bool selectFolder(bool createIfMissing) override
     {
+        ++selectCalls;
         if (failSelect) {
             return false;
         }
-        if (!folderExists) {
+        if (!hasFolder) {
             if (!createIfMissing) {
                 return false;
             }
-            folderExists = true;
+            hasFolder = true;
         }
         return true;
+    }
+
+    bool folderExists() override
+    {
+        return hasFolder;
     }
 
     bool readSecret(const QString &key, QString &value) override
@@ -118,9 +125,12 @@ private Q_SLOTS:
     void saveLoadRoundTrip();
     void saveEmptyAccessFails();
     void savePartialFailureRollsBack();
+    void saveCommitWriteFailureLeavesUnloadableState();
     void saveOpenFailureReportsFailure();
     void clearRemovesEverything();
     void clearWithoutFolderReportsSuccess();
+    void clearWithoutFolderIgnoresSelectFailure();
+    void clearFolderSelectFailureReportsFailure();
     void clearOpenFailureReportsFailure();
     void clearRemoveFailureReportsFailure();
     void disabledBackendLoadSaveFailClearSucceeds();
@@ -162,7 +172,26 @@ void WalletStoreTest::savePartialFailureRollsBack()
     QVERIFY(backend.removedKeys.contains(QStringLiteral("refreshToken")));
     QVERIFY(backend.removedKeys.contains(QStringLiteral("accessExpiresAt")));
     QVERIFY(backend.removedKeys.contains(QStringLiteral("login")));
+    QVERIFY(backend.removedKeys.contains(QStringLiteral("committed")));
     QVERIFY(!backend.entries.contains(QStringLiteral("accessToken")));
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+}
+
+void WalletStoreTest::saveCommitWriteFailureLeavesUnloadableState()
+{
+    // Regression: rollback ignored removal results, so a surviving access
+    // token from a failed save was still accepted by load(). The commit
+    // marker (written last, required by load) closes that hole: the save
+    // fails and the leftovers are unloadable even when removal also fails.
+    FakeBackend backend;
+    backend.failingWrites.insert(QStringLiteral("committed"));
+    backend.failingRemoves.insert(QStringLiteral("accessToken"));
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(!store.save(makeTokens()));
+    // The access token genuinely survived the failed rollback...
+    QVERIFY(backend.entries.contains(QStringLiteral("accessToken")));
+    // ...yet load() must not accept it without the commit marker.
     StoredTokens loaded;
     QVERIFY(!store.load(loaded));
 }
@@ -181,6 +210,7 @@ void WalletStoreTest::clearRemovesEverything()
     KWalletSecureStore store(nullptr, &backend);
     QVERIFY(store.save(makeTokens()));
     QVERIFY(store.clear());
+    QVERIFY(!backend.entries.contains(QStringLiteral("committed")));
     StoredTokens loaded;
     QVERIFY(!store.load(loaded));
 }
@@ -192,6 +222,28 @@ void WalletStoreTest::clearWithoutFolderReportsSuccess()
     KWalletSecureStore store(nullptr, &backend);
     QVERIFY(store.clear());
     QVERIFY(backend.removedKeys.isEmpty());
+}
+
+void WalletStoreTest::clearWithoutFolderIgnoresSelectFailure()
+{
+    // Absent folder means nothing is persisted, even if selection would fail.
+    FakeBackend backend;
+    backend.failSelect = true;
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.clear());
+    QCOMPARE(backend.selectCalls, 0);
+}
+
+void WalletStoreTest::clearFolderSelectFailureReportsFailure()
+{
+    // Regression: clear() conflated "folder absent" with "folder exists but
+    // unselectable" and reported success while credentials may have remained.
+    FakeBackend backend;
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.save(makeTokens()));
+    QVERIFY(backend.hasFolder);
+    backend.failSelect = true;
+    QVERIFY(!store.clear());
 }
 
 void WalletStoreTest::clearOpenFailureReportsFailure()

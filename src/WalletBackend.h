@@ -27,7 +27,11 @@ public:
     virtual void close() = 0;
     // Selects the Kgitdo folder, creating it when requested. False: the
     // folder is unavailable, so reads find nothing and writes must fail.
+    // (A false return does not say whether the folder is absent or merely
+    // unselectable; use folderExists() when the distinction matters.)
     virtual bool selectFolder(bool createIfMissing) = 0;
+    // True when the Kgitdo folder exists. Valid after open().
+    virtual bool folderExists() = 0;
     virtual bool readSecret(const QString &key, QString &value) = 0;
     virtual bool readBlob(const QString &key, QByteArray &value) = 0;
     virtual bool writeSecret(const QString &key, const QString &value) = 0;
