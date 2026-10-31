@@ -340,18 +340,24 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 // Keep the list visible: mutation failures are warnings,
                 // not load errors, and the row stays with its old state.
                 // A rate limit still governs retry timing, so propagate it
-                // for the outcome countdown like the load path does.
+                // for the outcome countdown like the load path does. But a
+                // non-rate-limit failure says nothing about an outcome
+                // another mutation armed: preserve any existing rate-limit
+                // flag, interval, and owner, replacing them only when this
+                // response establishes a new rate-limit outcome.
                 m_mutationGuard.remove(id);
                 if (isUndo) {
                     m_undoInFlight = false;
                 }
-                m_rateLimited = result.rateLimited;
-                m_retryAfterSecs = result.retryAfterSecs;
-                // This mutation owns the outcome it just set (or cleared by
-                // failing without a rate limit): a later success retires it
-                // only when it is the same mutation's retry.
-                m_rateLimitedMutationId = result.rateLimited ? id : 0;
-                Q_EMIT outcomeChanged();
+                if (result.rateLimited) {
+                    m_rateLimited = true;
+                    m_retryAfterSecs = result.retryAfterSecs;
+                    // This mutation owns the outcome it just set: a later
+                    // success retires it only when it is the same
+                    // mutation's retry.
+                    m_rateLimitedMutationId = id;
+                    Q_EMIT outcomeChanged();
+                }
                 m_warningMessage = result.errorMessage.isEmpty()
                     ? QStringLiteral("Could not update the issue. Please retry.")
                     : result.errorMessage;

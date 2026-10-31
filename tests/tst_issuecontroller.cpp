@@ -302,6 +302,7 @@ private Q_SLOTS:
     void mutationRateLimitFailureThenSuccessClearsCountdown();
     void partialLoadRateLimitSurvivesMutationSuccess();
     void overlappingMutationKeepsOtherRateOutcome();
+    void mutationNonRateFailurePreservesOtherRateOutcome();
     void mutationInFlightThenFailedReloadKeepsGuard();
     void undoInFlightThenSuccessfulReloadHasNoDuplicate();
     void secondMutationBlockedAcrossReload();
@@ -555,6 +556,46 @@ void IssueControllerTest::overlappingMutationKeepsOtherRateOutcome()
     QVERIFY(!controller.hasWarning());
     QVERIFY(!controller.rateLimited());
     QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::mutationNonRateFailurePreservesOtherRateOutcome()
+{
+    // Mutation A hits the rate limit (outcome owned by A); an unrelated
+    // mutation B then fails without a rate limit. B's failure updates the
+    // warning to its own message but must preserve A's countdown and
+    // ownership; A's own retry success then retires it.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpRateLimited(45));
+    IssueHttpResult denied;
+    denied.httpStatus = 403;
+    denied.body = QByteArray("{\"message\":\"Must have push access\"}");
+    api.updateQueue.append(denied);
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString idA = rowId(controller, 0);
+    const QString idB = rowId(controller, 1);
+    controller.closeIssue(idA);
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    controller.closeIssue(idB);
+    QCOMPARE(controller.loadedCount(), 2); // both rows stay
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("installation"),
+                                                  Qt::CaseInsensitive));
+    QVERIFY(controller.rateLimited()); // A's outcome preserved
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    controller.closeIssue(idA); // A's own retry
+    QCOMPARE(controller.loadedCount(), 1); // A converged, B kept
+    QVERIFY(!controller.hasWarning());
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.canUndoClose()); // undo moved to A
 }
 
 void IssueControllerTest::partialDataWarns()
