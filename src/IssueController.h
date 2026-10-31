@@ -102,6 +102,7 @@ private:
     QList<Issue> m_loaded;
 
     bool m_loading = false;
+    int m_generation = 0; // fetch epoch: logout bumps it so stale callbacks die
     QString m_errorMessage;
     QString m_warningMessage;
     bool m_incomplete = false;

@@ -12,20 +12,28 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
         // Signing out invalidates the token the list was loaded with:
         // drop everything rather than showing another user's tasks.
         connect(m_auth, &AuthSession::statusChanged, this, [this]() {
-            if (!m_auth->isAuthenticated() && (!m_loaded.isEmpty() || !m_errorMessage.isEmpty())) {
-                m_loaded.clear();
-                m_model->setIssues({});
-                m_availableRepos.clear();
-                Q_EMIT availableReposChanged();
-                m_errorMessage.clear();
-                Q_EMIT errorMessageChanged();
-                m_warningMessage.clear();
-                Q_EMIT warningChanged();
-                clearOutcomeFlags();
-                m_lastRefresh = QDateTime();
-                Q_EMIT lastRefreshChanged();
-                Q_EMIT countsChanged();
+            if (m_auth->isAuthenticated()) {
+                return;
             }
+            // Invalidate any in-flight fetch first: its callback must not
+            // repopulate the list with the pre-logout token's data, even
+            // when the list is currently empty. Bump the generation so the
+            // stale callback is ignored, and release the loading guard so a
+            // later sign-in can reload immediately.
+            ++m_generation;
+            setLoading(false);
+            m_loaded.clear();
+            m_model->setIssues({});
+            m_availableRepos.clear();
+            Q_EMIT availableReposChanged();
+            m_errorMessage.clear();
+            Q_EMIT errorMessageChanged();
+            m_warningMessage.clear();
+            Q_EMIT warningChanged();
+            clearOutcomeFlags();
+            m_lastRefresh = QDateTime();
+            Q_EMIT lastRefreshChanged();
+            Q_EMIT countsChanged();
         });
     }
 }
@@ -81,11 +89,18 @@ void IssueController::reload()
     const QString login = m_auth->userLogin();
     const int viewAtStart = m_view;
     const int stateAtStart = m_issueState;
+    const int generation = ++m_generation;
     setLoading(true);
     m_errorMessage.clear();
     Q_EMIT errorMessageChanged();
     m_client->fetchIssues(view, state, token, login,
-                          [this, viewAtStart, stateAtStart](const GitHubClient::FetchResult &result) {
+                          [this, viewAtStart, stateAtStart, generation](
+                              const GitHubClient::FetchResult &result) {
+                              if (generation != m_generation) {
+                                  // Superseded by logout (or a newer fetch):
+                                  // touch nothing, not even the loading flag.
+                                  return;
+                              }
                               setLoading(false);
                               if (m_view != viewAtStart || m_issueState != stateAtStart) {
                                   // Selection changed mid-load: this data

@@ -156,6 +156,7 @@ private Q_SLOTS:
     void incompleteWarns();
     void concurrentReloadGuarded();
     void viewChangeMidLoadRefetches();
+    void logoutMidLoadDiscardsResult();
     void logoutClearsList();
     void signedOutReloadErrors();
 };
@@ -364,6 +365,34 @@ void IssueControllerTest::viewChangeMidLoadRefetches()
                  ->data(controller.model()->index(0), IssueListModel::TitleRole)
                  .toString(),
              QStringLiteral("New"));
+}
+
+void IssueControllerTest::logoutMidLoadDiscardsResult()
+{
+    // Logging out while a fetch is in flight must invalidate it: the stale
+    // callback (authorized with the pre-logout token) must not repopulate
+    // the list after logout, even when the list was still empty.
+    FakeIssueApi api;
+    api.defer = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QVERIFY(controller.loading());
+    auth->logout();
+    QVERIFY(!controller.loading());
+    api.fireAll(); // stale callbacks arrive here
+    QCOMPARE(controller.loadedCount(), 0);
+    QCOMPARE(controller.visibleCount(), 0);
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(!controller.loading());
+    // The loading guard was released: a later reload runs the normal
+    // signed-out path instead of wedging.
+    controller.reload();
+    QVERIFY(!controller.errorMessage().isEmpty());
+    QCOMPARE(controller.loadedCount(), 0);
 }
 
 void IssueControllerTest::logoutClearsList()
