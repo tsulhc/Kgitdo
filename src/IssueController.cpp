@@ -97,6 +97,13 @@ void IssueController::reload()
     const int viewAtStart = m_view;
     const int stateAtStart = m_issueState;
     const int generation = ++m_generation;
+    // A reload invalidates any in-flight mutation callback (it captures an
+    // older generation and will be fenced), so release their pending flags
+    // now: a failed reload keeps the current list, and its rows must not
+    // stay disabled forever. The fresh fetch reconverges with the server.
+    for (const Issue &loaded : m_loaded) {
+        m_model->setIssuePending(loaded.id, false);
+    }
     setLoading(true);
     m_errorMessage.clear();
     Q_EMIT errorMessageChanged();

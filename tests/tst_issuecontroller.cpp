@@ -258,6 +258,7 @@ private Q_SLOTS:
     void closeIssueRemovesRowAndEnablesUndo();
     void closeIssueDoubleSendGuarded();
     void closeIssueFailureWarnsAndClearsPending();
+    void mutationInFlightThenFailedReloadClearsPending();
     void reopenIssueRemovesRow();
     void undoLastCloseReopensAndRestores();
     void logoutDiscardsInFlightMutation();
@@ -720,6 +721,38 @@ void IssueControllerTest::closeIssueDoubleSendGuarded()
     QVERIFY(!controller.model()->isIssuePending(1));
     QCOMPARE(controller.loadedCount(), 0);
     QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::mutationInFlightThenFailedReloadClearsPending()
+{
+    // A reload fences in-flight mutation callbacks via the generation
+    // counter; their pending flags must be released too, or the row would
+    // stay disabled forever when the reload itself fails and keeps the
+    // old list.
+    FakeIssueApi api;
+    api.deferUpdate = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QVERIFY(controller.model()->isIssuePending(1));
+    IssueHttpResult failed;
+    failed.transportError = QStringLiteral("offline");
+    api.queue.append(failed);
+    controller.reload(); // fails; old list preserved, pending released
+    QVERIFY(!controller.model()->isIssuePending(1));
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(!controller.errorMessage().isEmpty());
+    // The orphaned mutation result arrives late and must apply nothing:
+    // no row removal, no undo snapshot from stale success.
+    api.updateQueue.append(httpUpdate("closed"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(!controller.canUndoClose());
 }
 
 void IssueControllerTest::closeIssueFailureWarnsAndClearsPending()
