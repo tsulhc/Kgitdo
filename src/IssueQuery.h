@@ -58,8 +58,17 @@ bool parseSearchPage(const QByteArray &body, QueryKind kind, SearchPage *out);
 // updatedAt descending (unknown dates last).
 QList<Issue> mergeAndSort(const QList<QList<Issue>> &perQuery);
 
-// Next-page URL from an HTTP Link header; empty when there is no rel="next".
+// Next-page URL from an HTTP Link header; empty when there is no rel="next"
+// or when the target leaves the GitHub API origin (the Bearer token must
+// never be sent to another host). Use extractNextLinkRaw to distinguish
+// "no further page" from "further page refused".
 QUrl parseNextLink(const QByteArray &linkHeader);
+
+// Raw rel="next" URL from a Link header, without origin checks.
+QUrl extractNextLinkRaw(const QByteArray &linkHeader);
+
+// Bearer-token issue requests may only target the GitHub API origin.
+bool isAllowedIssueApiUrl(const QUrl &url);
 
 // True when the search result set cannot be complete: the Search API caps
 // every query at 1.000 results.

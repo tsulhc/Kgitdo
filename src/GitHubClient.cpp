@@ -214,17 +214,38 @@ private:
                                     m_shared.maxTotalCount = mapped.page.totalCount;
                                 }
                                 m_shared.perQuery.append(mapped.page.issues);
-                                const QUrl next = IssueQuery::parseNextLink(
-                                    http.headers.value(QStringLiteral("link")).toUtf8());
-                                if (!next.isEmpty() && page < GitHubClient::kMaxPagesPerQuery) {
-                                    fetchUrl(next, queryIndex, page + 1);
-                                } else {
-                                    if (!next.isEmpty()) {
-                                        m_shared.sawNextAtCap = true;
-                                    }
-                                    startQuery(queryIndex + 1);
-                                }
+                                followNext(http.headers.value(QStringLiteral("link")).toUtf8(), queryIndex,
+                                           page);
                             });
+    }
+
+    void followNext(const QByteArray &linkHeader, int queryIndex, int page)
+    {
+        const QUrl raw = IssueQuery::extractNextLinkRaw(linkHeader);
+        if (raw.isEmpty()) {
+            startQuery(queryIndex + 1);
+            return;
+        }
+        if (!IssueQuery::isAllowedIssueApiUrl(raw)) {
+            // A further page exists but lives outside the GitHub API
+            // origin: never send the Bearer token there. Stop this query
+            // and report the list as partial instead.
+            if (m_shared.errorMessage.isEmpty()) {
+                m_shared.errorMessage = QStringLiteral(
+                    "Stopped following issue pagination outside the GitHub API; the list may be incomplete.");
+            }
+            if (m_shared.pagesParsed > 0) {
+                m_shared.truncated = true;
+            }
+            startQuery(queryIndex + 1);
+            return;
+        }
+        if (page < GitHubClient::kMaxPagesPerQuery) {
+            fetchUrl(raw, queryIndex, page + 1);
+        } else {
+            m_shared.sawNextAtCap = true;
+            startQuery(queryIndex + 1);
+        }
     }
 
     void fetchUrl(const QUrl &url, int queryIndex, int page)
@@ -250,16 +271,7 @@ private:
             // Provenance for continuation pages matches the query kind.
             flagProvenance(mapped.page.issues);
             m_shared.perQuery.append(mapped.page.issues);
-            const QUrl next = IssueQuery::parseNextLink(
-                http.headers.value(QStringLiteral("link")).toUtf8());
-            if (!next.isEmpty() && page < GitHubClient::kMaxPagesPerQuery) {
-                fetchUrl(next, queryIndex, page + 1);
-            } else {
-                if (!next.isEmpty()) {
-                    m_shared.sawNextAtCap = true;
-                }
-                startQuery(queryIndex + 1);
-            }
+            followNext(http.headers.value(QStringLiteral("link")).toUtf8(), queryIndex, page);
         });
     }
 

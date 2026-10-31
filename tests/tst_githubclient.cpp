@@ -84,6 +84,7 @@ private Q_SLOTS:
     void immediateErrorWithoutRequests();
     void firstPageFailureIsError();
     void midPaginationFailureTruncates();
+    void foreignNextLinkStopsWithoutTokenLeak();
     void secondQueryFailureWarns();
     void incompleteAndCappedSurface();
     void unauthorizedSurfaces();
@@ -202,6 +203,29 @@ void GitHubClientTest::midPaginationFailureTruncates()
                            QVERIFY(!result.errorMessage.isEmpty());
                        });
     QCOMPARE(api.requestedUrls.size(), 2);
+}
+
+void GitHubClientTest::foreignNextLinkStopsWithoutTokenLeak()
+{
+    // A rel="next" pointing outside the GitHub API origin must never be
+    // requested (the Bearer token would leak there). The first page is
+    // kept, the result is marked partial, and only the API origin is hit.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A")}), "<https://evil.example/next>; rel=\"next\""));
+    GitHubClient client(&api);
+    client.fetchIssues(IssueQuery::View::Created, IssueQuery::State::Open, QStringLiteral("tok"),
+                       QStringLiteral("octocat"),
+                       [&](const GitHubClient::FetchResult &result) {
+                           QVERIFY(result.ok);
+                           QCOMPARE(result.issues.size(), 1);
+                           QVERIFY(result.truncated);
+                           QVERIFY(result.errorMessage.contains(QStringLiteral("GitHub API")));
+                       });
+    QCOMPARE(api.requestedUrls.size(), 1);
+    for (const QUrl &url : api.requestedUrls) {
+        QCOMPARE(url.host(), QStringLiteral("api.github.com"));
+        QVERIFY(url.scheme() == QStringLiteral("https"));
+    }
 }
 
 void GitHubClientTest::secondQueryFailureWarns()

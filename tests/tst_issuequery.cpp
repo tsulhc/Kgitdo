@@ -21,6 +21,8 @@ private Q_SLOTS:
     void nextLinkFound();
     void nextLinkAbsent();
     void nextLinkRejectsNonHttps();
+    void nextLinkRejectsForeignHttpsHost();
+    void nextLinkAllowsApiOriginOnly();
     void cappedResults();
 };
 
@@ -202,6 +204,29 @@ void IssueQueryTest::nextLinkRejectsNonHttps()
 {
     const QByteArray link = "<http://evil.example/page>; rel=\"next\"";
     QVERIFY(!IssueQuery::parseNextLink(link).isValid());
+}
+
+void IssueQueryTest::nextLinkRejectsForeignHttpsHost()
+{
+    // A foreign HTTPS host is syntactically a next page, but following it
+    // with the Bearer token would leak credentials: the safe parser must
+    // refuse it while the raw extractor still reports its presence so the
+    // caller can mark the list partial instead of silently complete.
+    const QByteArray link = "<https://evil.example/next>; rel=\"next\"";
+    QVERIFY(!IssueQuery::parseNextLink(link).isValid());
+    const QUrl raw = IssueQuery::extractNextLinkRaw(link);
+    QVERIFY(raw.isValid());
+    QCOMPARE(raw.host(), QStringLiteral("evil.example"));
+    QVERIFY(!IssueQuery::isAllowedIssueApiUrl(raw));
+}
+
+void IssueQueryTest::nextLinkAllowsApiOriginOnly()
+{
+    QVERIFY(IssueQuery::isAllowedIssueApiUrl(QUrl(QStringLiteral("https://api.github.com/search/issues"))));
+    QVERIFY(!IssueQuery::isAllowedIssueApiUrl(QUrl(QStringLiteral("http://api.github.com/search/issues"))));
+    QVERIFY(!IssueQuery::isAllowedIssueApiUrl(QUrl(QStringLiteral("https://api.github.com:8443/search/issues"))));
+    QVERIFY(!IssueQuery::isAllowedIssueApiUrl(QUrl(QStringLiteral("https://github.com/search/issues"))));
+    QVERIFY(!IssueQuery::isAllowedIssueApiUrl(QUrl()));
 }
 
 void IssueQueryTest::cappedResults()

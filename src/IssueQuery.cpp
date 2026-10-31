@@ -187,7 +187,7 @@ QList<Issue> mergeAndSort(const QList<QList<Issue>> &perQuery)
     return merged;
 }
 
-QUrl parseNextLink(const QByteArray &linkHeader)
+QUrl extractNextLinkRaw(const QByteArray &linkHeader)
 {
     // Link: <url>; rel="next", <url>; rel="last", ...
     const QList<QByteArray> parts = linkHeader.split(',');
@@ -228,12 +228,32 @@ QUrl parseNextLink(const QByteArray &linkHeader)
         }
         if (isNext) {
             const QUrl url(QString::fromUtf8(part.mid(open + 1, close - open - 1)));
-            if (url.isValid() && (url.scheme() == QLatin1String("https"))) {
+            if (url.isValid() && !url.isRelative() && !url.scheme().isEmpty()
+                && !url.host().isEmpty()) {
                 return url;
             }
         }
     }
     return QUrl();
+}
+
+bool isAllowedIssueApiUrl(const QUrl &url)
+{
+    // The token travels as a Bearer header on every issue request, so the
+    // pagination target must stay inside the GitHub API origin. Anything
+    // else — another host, a non-HTTPS scheme, an unusual port — is
+    // refused and the list is reported partial instead.
+    return url.scheme() == QLatin1String("https") && url.host() == QLatin1String("api.github.com")
+        && url.port(443) == 443;
+}
+
+QUrl parseNextLink(const QByteArray &linkHeader)
+{
+    const QUrl raw = extractNextLinkRaw(linkHeader);
+    if (raw.isEmpty() || !isAllowedIssueApiUrl(raw)) {
+        return QUrl();
+    }
+    return raw;
 }
 
 bool isCappedResult(int totalCount, bool hasNextPage, int loadedCount)
