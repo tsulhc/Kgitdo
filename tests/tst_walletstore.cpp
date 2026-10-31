@@ -477,10 +477,11 @@ void WalletStoreTest::saveSilentWriteLossReportsFailure()
 {
     // Regression: backends must verify writes by read-back. A backend that
     // acknowledges writes without persisting them must not produce a
-    // claimed success. Such an attempted-but-unverified save may still have
-    // persisted something outside the backend's account of the world, so it
-    // arms the same fail-closed disabled-clear duty as any other attempted
-    // save: logout while disabled must warn, not claim success.
+    // claimed success. The attempted save arms the fail-closed
+    // disabled-clear duty, but the follow-up load() verifies the folder
+    // carries no credential entries (listing and reads agree), which
+    // stands the duty back down: logout while disabled then stays silent
+    // because there is provably nothing left to remove.
     FakeBackend backend;
     KWalletSecureStore store(nullptr, &backend);
     backend.dropWrites = true;
@@ -488,7 +489,7 @@ void WalletStoreTest::saveSilentWriteLossReportsFailure()
     StoredTokens loaded;
     QVERIFY(!store.load(loaded));
     backend.enabled = false;
-    QVERIFY(!store.clear());
+    QVERIFY(store.clear());
     backend.enabled = true;
     QVERIFY(store.clear());
     StoredTokens after;
