@@ -4,6 +4,8 @@
 #include <QNetworkRequest>
 #include <QTimer>
 
+#include "IssueQuery.h"
+
 namespace
 {
 constexpr int kTimeoutMs = 30000;
@@ -32,9 +34,31 @@ QNetworkRequest QNetworkIssueApi::makeApiRequest(const QUrl &url, const QString 
 void QNetworkIssueApi::searchIssues(const QUrl &url, const QString &accessToken,
                                     std::function<void(IssueHttpResult)> callback)
 {
-    QNetworkRequest request = makeApiRequest(url, accessToken);
+    startJsonRequest("GET", makeApiRequest(url, accessToken), {}, std::move(callback));
+}
 
-    QNetworkReply *reply = m_nam->get(request);
+void QNetworkIssueApi::updateIssueState(const IssueUpdateRequest &request, const QString &accessToken,
+                                        std::function<void(IssueHttpResult)> callback)
+{
+    const QUrl url = IssueQuery::buildIssueUpdateUrl(request.owner, request.repo, request.number);
+    if (!url.isValid() || url.isEmpty()) {
+        IssueHttpResult result;
+        result.transportError = QStringLiteral("Invalid issue reference. Please reload and retry.");
+        callback(result);
+        return;
+    }
+    QNetworkRequest apiRequest = makeApiRequest(url, accessToken);
+    apiRequest.setRawHeader("Content-Type", "application/json");
+    startJsonRequest("PATCH", apiRequest, IssueQuery::buildIssueUpdateBody(request.closed),
+                     std::move(callback));
+}
+
+void QNetworkIssueApi::startJsonRequest(const QByteArray &verb, const QNetworkRequest &request,
+                                        const QByteArray &body,
+                                        std::function<void(IssueHttpResult)> callback)
+{
+    QNetworkReply *reply = body.isEmpty() ? m_nam->sendCustomRequest(request, verb)
+                                          : m_nam->sendCustomRequest(request, verb, body);
     auto *timer = new QTimer(reply);
     timer->setSingleShot(true);
     timer->setInterval(kTimeoutMs);

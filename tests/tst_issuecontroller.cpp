@@ -87,6 +87,10 @@ public:
     QList<QUrl> requestedUrls;
     bool defer = false;
     QList<std::function<void(IssueHttpResult)>> pending;
+    QList<IssueUpdateRequest> updateRequests;
+    QList<IssueHttpResult> updateQueue;
+    bool deferUpdate = false;
+    QList<std::function<void(IssueHttpResult)>> updatePending;
 
     void searchIssues(const QUrl &url, const QString &,
                       std::function<void(IssueHttpResult)> callback) override
@@ -105,6 +109,23 @@ public:
         callback(result);
     }
 
+    void updateIssueState(const IssueUpdateRequest &request, const QString &,
+                          std::function<void(IssueHttpResult)> callback) override
+    {
+        updateRequests.append(request);
+        if (deferUpdate) {
+            updatePending.append(callback);
+            return;
+        }
+        IssueHttpResult result;
+        if (!updateQueue.isEmpty()) {
+            result = updateQueue.takeFirst();
+        } else {
+            result.transportError = QStringLiteral("no queued update response");
+        }
+        callback(result);
+    }
+
     void fireAll()
     {
         while (!pending.isEmpty()) {
@@ -114,6 +135,20 @@ public:
                 result = queue.takeFirst();
             } else {
                 result.transportError = QStringLiteral("no queued response");
+            }
+            callback(result);
+        }
+    }
+
+    void fireUpdates()
+    {
+        while (!updatePending.isEmpty()) {
+            auto callback = updatePending.takeFirst();
+            IssueHttpResult result;
+            if (!updateQueue.isEmpty()) {
+                result = updateQueue.takeFirst();
+            } else {
+                result.transportError = QStringLiteral("no queued update response");
             }
             callback(result);
         }
@@ -152,6 +187,30 @@ IssueHttpResult httpOk(const QByteArray &body)
     result.httpStatus = 200;
     result.body = body;
     return result;
+}
+
+IssueHttpResult httpUpdate(const char *state)
+{
+    IssueHttpResult result;
+    result.httpStatus = 200;
+    result.body = QByteArray("{\"state\":\"") + state + "\"}";
+    return result;
+}
+
+QByteArray closedItemJson(qlonglong id, int number, const char *title, const char *repo)
+{
+    return QByteArray("{\"id\":") + QByteArray::number(id) + ",\"number\":" + QByteArray::number(number)
+        + ",\"title\":\"" + title + "\",\"state\":\"closed\",\"html_url\":\"https://github.com/" + repo
+        + "/issues/" + QByteArray::number(number) + "\",\"updated_at\":\"2026-10-01T10:00:00Z\","
+        + "\"repository_url\":\"https://api.github.com/repos/" + repo + "\",\"labels\":[]}";
+}
+
+// Row id as passed to closeIssue()/reopenIssue() (QString form).
+QString rowId(IssueController &controller, int row)
+{
+    return controller.model()
+        ->data(controller.model()->index(row), IssueListModel::IssueIdRole)
+        .toString();
 }
 
 // Builds an Authenticated session via restore(): preloaded store +
@@ -196,6 +255,14 @@ private Q_SLOTS:
     void refreshPreservesIssues();
     void reloginAsDifferentUserClearsAndReloads();
     void signedOutReloadErrors();
+    void closeIssueRemovesRowAndEnablesUndo();
+    void closeIssueDoubleSendGuarded();
+    void closeIssueFailureWarnsAndClearsPending();
+    void reopenIssueRemovesRow();
+    void undoLastCloseReopensAndRestores();
+    void logoutDiscardsInFlightMutation();
+    void logoutClearsPendingAndUndo();
+    void reloginDiscardsInFlightMutation();
 };
 
 void IssueControllerTest::reloadLoadsAndPopulates()
@@ -603,6 +670,232 @@ void IssueControllerTest::signedOutReloadErrors()
     controller.reload();
     QVERIFY(!controller.errorMessage().isEmpty());
     QVERIFY(api.requestedUrls.isEmpty());
+}
+
+void IssueControllerTest::closeIssueRemovesRowAndEnablesUndo()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 2);
+    const QString id = rowId(controller, 0);
+    QVERIFY(!controller.canUndoClose());
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    QVERIFY(api.updateRequests.at(0).closed);
+    QCOMPARE(api.updateRequests.at(0).number, 7);
+    QCOMPARE(controller.loadedCount(), 1);
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(!controller.hasWarning());
+    QVERIFY(controller.canUndoClose());
+    QVERIFY(controller.undoMessage().contains(QStringLiteral("o/r#7")));
+}
+
+void IssueControllerTest::closeIssueDoubleSendGuarded()
+{
+    // A second click while the PATCH is in flight sends nothing: the
+    // per-issue pending flag guards the double dispatch.
+    FakeIssueApi api;
+    api.deferUpdate = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    QVERIFY(controller.model()->isIssuePending(1));
+    controller.closeIssue(id); // duplicate while pending: no second request
+    QCOMPARE(api.updateRequests.size(), 1);
+    api.fireUpdates();
+    QVERIFY(!controller.model()->isIssuePending(1));
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::closeIssueFailureWarnsAndClearsPending()
+{
+    // Mutation failures are warnings, not errors: the list stays visible
+    // and the row returns to its interactive state.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    IssueHttpResult denied;
+    denied.httpStatus = 403;
+    denied.body = QByteArray("{\"message\":\"Must have push access\"}");
+    api.updateQueue.append(denied);
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(controller.loadedCount(), 1); // row stays
+    QVERIFY(!controller.model()->isIssuePending(1));
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("installation"),
+                                                  Qt::CaseInsensitive));
+    QVERIFY(!controller.canUndoClose());
+}
+
+void IssueControllerTest::reopenIssueRemovesRow()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({closedItemJson(3, 9, "Old", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("open"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.setIssueState(IssueController::StateClosed);
+    QCOMPARE(controller.loadedCount(), 1);
+    const QString id = rowId(controller, 0);
+    controller.reopenIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    QVERIFY(!api.updateRequests.at(0).closed);
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.canUndoClose()); // undo is close-only
+}
+
+void IssueControllerTest::undoLastCloseReopensAndRestores()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    api.updateQueue.append(httpUpdate("open"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.closeIssue(rowId(controller, 0));
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.canUndoClose());
+    controller.undoLastClose();
+    QCOMPARE(api.updateRequests.size(), 2);
+    QVERIFY(!api.updateRequests.at(1).closed);
+    QCOMPARE(controller.loadedCount(), 2);
+    QVERIFY(!controller.canUndoClose());
+    QVERIFY(controller.undoMessage().isEmpty());
+    QVERIFY(controller.errorMessage().isEmpty());
+    controller.undoLastClose(); // no snapshot: no request
+    QCOMPARE(api.updateRequests.size(), 2);
+}
+
+void IssueControllerTest::logoutDiscardsInFlightMutation()
+{
+    // A mutation completing after logout must change nothing: the stale
+    // callback is fenced by the logout generation bump.
+    FakeIssueApi api;
+    api.deferUpdate = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.closeIssue(rowId(controller, 0));
+    QCOMPARE(api.updateRequests.size(), 1);
+    auth->logout();
+    api.fireUpdates(); // stale callbacks arrive here
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.canUndoClose());
+    QVERIFY(controller.errorMessage().isEmpty());
+}
+
+void IssueControllerTest::logoutClearsPendingAndUndo()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.closeIssue(rowId(controller, 0));
+    QVERIFY(controller.canUndoClose());
+    auth->logout();
+    QVERIFY(!controller.canUndoClose());
+    QVERIFY(controller.undoMessage().isEmpty());
+    QVERIFY(!controller.hasWarning());
+}
+
+void IssueControllerTest::reloginDiscardsInFlightMutation()
+{
+    // Alice's close is in flight when bob authenticates: the stale success
+    // must not drop bob's rows or arm an undo for the wrong account.
+    FakeIssueApi api;
+    api.deferUpdate = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "AliceIssue", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    auto *network = new TinyAuthNetwork(this);
+    auto *store = new InMemorySecureStore(this);
+    StoredTokens tokens;
+    tokens.accessToken = QStringLiteral("tok-alice");
+    tokens.refreshToken = QStringLiteral("ref-alice");
+    tokens.login = QStringLiteral("alice");
+    store->save(tokens);
+    IAuthNetwork::UserResult aliceUser;
+    aliceUser.ok = true;
+    aliceUser.login = QStringLiteral("alice");
+    network->userQueue.append(aliceUser);
+    auto *auth = new AuthSession(network, store, this);
+    auth->setClientId(QStringLiteral("cid"));
+    auth->restore();
+    QVERIFY(auth->isAuthenticated());
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.closeIssue(rowId(controller, 0)); // in flight, alice's token
+    QCOMPARE(api.updateRequests.size(), 1);
+    // Bob's pages are queued before his login completes (controller
+    // reloads for the new identity synchronously inside the handler).
+    api.queue.append(httpOk(pageJson({itemJson(2, 3, "BobIssue", "o/b")})));
+    api.queue.append(httpOk(pageJson({})));
+    IAuthNetwork::DeviceCodeResult device;
+    device.ok = true;
+    device.data.deviceCode = QStringLiteral("dev-code-2");
+    device.data.userCode = QStringLiteral("AAAA-BBBB");
+    device.data.verificationUri = QStringLiteral("https://github.com/login/device");
+    device.data.expiresInSeconds = 900;
+    device.data.intervalSeconds = 3600;
+    network->deviceQueue.append(device);
+    IAuthNetwork::TokenResult bobToken;
+    bobToken.ok = true;
+    bobToken.data.hasToken = true;
+    bobToken.data.accessToken = QStringLiteral("tok-bob");
+    bobToken.data.refreshToken = QStringLiteral("ref-bob");
+    bobToken.data.expiresInSeconds = 3600;
+    network->pollQueue.append(bobToken);
+    IAuthNetwork::UserResult bobUser;
+    bobUser.ok = true;
+    bobUser.login = QStringLiteral("bob");
+    network->userQueue.append(bobUser);
+    auth->startLogin();
+    auth->pollOnce();
+    QVERIFY(auth->isAuthenticated());
+    QCOMPARE(auth->userLogin(), QStringLiteral("bob"));
+    api.fireUpdates(); // alice's stale mutation success
+    QCOMPARE(controller.loadedCount(), 1);
+    QCOMPARE(controller.model()
+                 ->data(controller.model()->index(0), IssueListModel::TitleRole)
+                 .toString(),
+             QStringLiteral("BobIssue"));
+    QVERIFY(!controller.canUndoClose());
 }
 
 QTEST_MAIN(IssueControllerTest)

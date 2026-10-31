@@ -9,6 +9,8 @@ private Q_SLOTS:
     void rolesAndData();
     void emptyModel();
     void resetReplaces();
+    void pendingToggle();
+    void removeIssue();
 };
 
 void IssueListModelTest::rolesAndData()
@@ -67,6 +69,41 @@ void IssueListModelTest::resetReplaces()
     QCOMPARE(model.rowCount(), 2);
     model.setIssues({});
     QCOMPARE(model.rowCount(), 0);
+}
+
+void IssueListModelTest::pendingToggle()
+{
+    IssueListModel model;
+    Issue a;
+    a.id = 1;
+    model.setIssues({a});
+    QVERIFY(!model.isIssuePending(1));
+    QVERIFY(!model.isIssuePending(999));
+    QVERIFY(model.setIssuePending(1, true));
+    QVERIFY(model.isIssuePending(1));
+    QVERIFY(!model.setIssuePending(999, true)); // absent row: no-op
+    QVERIFY(model.setIssuePending(1, false));
+    QVERIFY(!model.isIssuePending(1));
+    // The pending role reflects the flag for QML spinners.
+    QCOMPARE(model.data(model.index(0), IssueListModel::PendingRole).toBool(), false);
+    QVERIFY(model.setIssuePending(1, true));
+    QCOMPARE(model.data(model.index(0), IssueListModel::PendingRole).toBool(), true);
+}
+
+void IssueListModelTest::removeIssue()
+{
+    IssueListModel model;
+    Issue a;
+    a.id = 1;
+    Issue b;
+    b.id = 2;
+    model.setIssues({a, b});
+    QVERIFY(model.removeIssue(1));
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.data(model.index(0), IssueListModel::IssueIdRole).toString(),
+             QStringLiteral("2"));
+    QVERIFY(!model.removeIssue(999)); // absent row: no-op
+    QCOMPARE(model.rowCount(), 1);
 }
 
 QTEST_MAIN(IssueListModelTest)

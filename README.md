@@ -7,7 +7,7 @@
 The goal is simple: keep track of issues you created or were assigned to, across repositories, in a clean checklist that feels at home on KDE Plasma. No full Git client, no heavyweight project-management suite, and no second task database to maintain.
 
 > [!IMPORTANT]
-> **Project status: W3 checklist implemented.** This README describes the intended product and its initial scope. The Kirigami shell builds and runs with GitHub App device-flow sign-in, KWallet session persistence, and a read-only issue checklist (All/Assigned/Created views, Open/Closed state, repository filter) over issues assigned to you or created by you; closing and reopening issues arrives in the next milestone.
+> **Project status: W4 close/reopen implemented.** This README describes the intended product and its initial scope. The Kirigami shell builds and runs with GitHub App device-flow sign-in, KWallet session persistence, and an issue checklist (All/Assigned/Created views, Open/Closed state, repository filter) over issues assigned to you or created by you; the checkbox closes an open issue (or reopens a closed one) directly on GitHub, with a short undo window after closing.
 
 ## Why Kgitdo?
 
@@ -88,6 +88,12 @@ Security: tokens never live in plain files, logs, QSettings, or CI. `401` (revok
 After sign-in the app loads open issues **assigned to you or created by you** across the repositories the GitHub App installation can see, using two `GET /search/issues` queries (`author:<login>` and `assignee:<login>`, `is:issue`, newest first, 100 per page) whose results are merged and deduplicated by stable issue id — an issue from both queries appears exactly once with both provenances. Pull-request entries are never shown. Views (All / Assigned / Created) and Open / Closed reload from GitHub; the repository filter applies to loaded data, with loaded/visible counts, so a narrow filter is never confused with an empty account.
 
 Partial results are always explicit: the UI warns when GitHub reports `incomplete_results`, when the 1,000-result search cap is hit, or when pagination is interrupted (data loaded so far stays visible). `401` asks for sign-in again; rate limits (`429`/`403` quota, `Retry-After` / `X-RateLimit-Reset`) surface a wait-and-retry warning instead of retrying in a loop.
+
+## Completing and reopening issues (PATCH)
+
+The checklist checkbox mutates state on GitHub: ticking an open issue sends `PATCH /repos/{owner}/{repo}/issues/{number}` with `{"state": "closed", "state_reason": "completed"}`; unticking a closed one in the Closed view sends `{"state": "open"}`. Nothing else is touched — title, body, assignees, and labels are never sent. A change counts only when GitHub echoes the requested state, so an unexpected server reply is treated as a failure rather than a success.
+
+Guards and feedback: the row shows a spinner while its PATCH is in flight and a second click on the same issue sends nothing (the first request owns the outcome); stale callbacks after logout or account switch are discarded. A failed mutation is a warning banner, not an error screen — the list stays visible and the row returns to its prior state. Closing shows a short undo banner that restores the row by reopening the same issue on GitHub.
 
 ## Non-goals
 

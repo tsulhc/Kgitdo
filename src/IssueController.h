@@ -33,6 +33,8 @@ class IssueController : public QObject
     Q_PROPERTY(int loadedCount READ loadedCount NOTIFY countsChanged)
     Q_PROPERTY(int visibleCount READ visibleCount NOTIFY countsChanged)
     Q_PROPERTY(QDateTime lastRefresh READ lastRefresh NOTIFY lastRefreshChanged)
+    Q_PROPERTY(bool canUndoClose READ canUndoClose NOTIFY undoChanged)
+    Q_PROPERTY(QString undoMessage READ undoMessage NOTIFY undoChanged)
 
 public:
     // Mirror IssueQuery enums for QML (int-compatible values).
@@ -67,12 +69,18 @@ public:
     int loadedCount() const { return m_loaded.size(); }
     int visibleCount() const { return m_model ? m_model->rowCount() : 0; }
     QDateTime lastRefresh() const { return m_lastRefresh; }
+    bool canUndoClose() const { return m_undo.id != 0; }
+    QString undoMessage() const { return m_undoMessage; }
 
     void setView(int view);
     void setIssueState(int state);
     void setRepoFilter(const QString &repoFullName);
 
     Q_INVOKABLE void reload();
+    Q_INVOKABLE void closeIssue(const QString &issueId);
+    Q_INVOKABLE void reopenIssue(const QString &issueId);
+    Q_INVOKABLE void undoLastClose();
+    Q_INVOKABLE void dismissUndo();
 
 Q_SIGNALS:
     void viewChanged();
@@ -85,15 +93,21 @@ Q_SIGNALS:
     void outcomeChanged();
     void countsChanged();
     void lastRefreshChanged();
+    void undoChanged();
 
 private:
     void setLoading(bool loading);
     void applyRepoFilter();
     void clearOutcomeFlags();
     // Drops every account-derived state (list, repos, filter, messages,
-    // outcome flags, refresh stamp) and invalidates in-flight fetches.
-    // Shared by sign-out and new-identity sign-in cleanup.
+    // outcome flags, refresh stamp, undo snapshot) and invalidates
+    // in-flight fetches. Shared by sign-out and new-identity sign-in cleanup.
     void clearAllState();
+    // One-shot close/reopen: resolves coordinates from the loaded list,
+    // guards double activation via the pending flag, then delegates.
+    void sendStateChange(qlonglong id, bool closed, bool isUndo);
+    void clearUndo();
+    int loadedRow(qlonglong id) const;
 
     AuthSession *m_auth = nullptr;
     GitHubClient *m_client = nullptr;
@@ -120,4 +134,15 @@ private:
     // sign-out (e.g. refresh failure followed by a fresh device flow) still
     // drops the prior account's issues and reloads for the new identity.
     QString m_lastLogin;
+    // One-shot undo snapshot for the last successful close: the issue is
+    // re-added locally when the undo reopen succeeds. Cleared on logout,
+    // new-identity sign-in, dismiss, successful undo, or a new close.
+    struct UndoClose {
+        qlonglong id = 0;
+        QString owner;
+        QString repo;
+        int number = 0;
+    };
+    UndoClose m_undo;
+    QString m_undoMessage;
 };

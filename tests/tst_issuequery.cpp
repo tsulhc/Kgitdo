@@ -24,6 +24,11 @@ private Q_SLOTS:
     void nextLinkRejectsForeignHttpsHost();
     void nextLinkAllowsApiOriginOnly();
     void cappedResults();
+    void updateUrlValid();
+    void updateUrlRejectsBadCoords();
+    void updateBodyCloseHasReason();
+    void updateBodyReopenHasNoReason();
+    void parseUpdatedStateStrict();
 };
 
 void IssueQueryTest::buildAllOpen()
@@ -235,6 +240,49 @@ void IssueQueryTest::cappedResults()
     QVERIFY(IssueQuery::isCappedResult(500, true, 100));
     QVERIFY(!IssueQuery::isCappedResult(500, false, 500));
     QVERIFY(!IssueQuery::isCappedResult(-1, false, 0));
+}
+
+void IssueQueryTest::updateUrlValid()
+{
+    const QUrl url = IssueQuery::buildIssueUpdateUrl(QStringLiteral("o"), QStringLiteral("r"), 7);
+    QVERIFY(url.isValid());
+    QCOMPARE(url.host(), QStringLiteral("api.github.com"));
+    QVERIFY(url.path().contains(QStringLiteral("/repos/o/r/issues/7")));
+}
+
+void IssueQueryTest::updateUrlRejectsBadCoords()
+{
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QString(), QStringLiteral("r"), 7).isValid());
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QStringLiteral("o"), QString(), 7).isValid());
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QStringLiteral("o"), QStringLiteral("r"), 0).isValid());
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QStringLiteral("o/x"), QStringLiteral("r"), 7).isValid());
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QStringLiteral("o"), QStringLiteral("r/x"), 7).isValid());
+}
+
+void IssueQueryTest::updateBodyCloseHasReason()
+{
+    const QByteArray body = IssueQuery::buildIssueUpdateBody(true);
+    QVERIFY(body.contains("\"state\""));
+    QVERIFY(body.contains("\"closed\""));
+    QVERIFY(body.contains("\"completed\""));
+}
+
+void IssueQueryTest::updateBodyReopenHasNoReason()
+{
+    const QByteArray body = IssueQuery::buildIssueUpdateBody(false);
+    QVERIFY(body.contains("\"open\""));
+    QVERIFY(!body.contains("\"completed\""));
+}
+
+void IssueQueryTest::parseUpdatedStateStrict()
+{
+    QString state;
+    QVERIFY(IssueQuery::parseUpdatedIssueState(QByteArray("{\"state\":\"closed\"}"), &state));
+    QCOMPARE(state, QStringLiteral("closed"));
+    QVERIFY(IssueQuery::parseUpdatedIssueState(QByteArray("{\"state\":\"open\"}"), &state));
+    QCOMPARE(state, QStringLiteral("open"));
+    QVERIFY(!IssueQuery::parseUpdatedIssueState(QByteArray("{\"state\":\"bogus\"}"), &state));
+    QVERIFY(!IssueQuery::parseUpdatedIssueState(QByteArray("{broken"), &state));
 }
 
 QTEST_MAIN(IssueQueryTest)

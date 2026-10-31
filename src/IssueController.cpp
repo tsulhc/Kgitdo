@@ -1,6 +1,7 @@
 #include "IssueController.h"
 
 #include <QSet>
+#include <algorithm>
 
 IssueController::IssueController(AuthSession *authSession, GitHubClient *client, QObject *parent)
     : QObject(parent)
@@ -199,6 +200,147 @@ void IssueController::clearOutcomeFlags()
     Q_EMIT outcomeChanged();
 }
 
+void IssueController::closeIssue(const QString &issueId)
+{
+    bool ok = false;
+    const qlonglong id = issueId.toLongLong(&ok);
+    if (ok) {
+        sendStateChange(id, true, false);
+    }
+}
+
+void IssueController::reopenIssue(const QString &issueId)
+{
+    bool ok = false;
+    const qlonglong id = issueId.toLongLong(&ok);
+    if (ok) {
+        sendStateChange(id, false, false);
+    }
+}
+
+void IssueController::undoLastClose()
+{
+    if (m_undo.id == 0) {
+        return;
+    }
+    // Keep the snapshot until the reopen succeeds: a failed undo must stay
+    // retryable via the banner rather than losing the issue coordinates.
+    sendStateChange(m_undo.id, false, true);
+}
+
+void IssueController::dismissUndo()
+{
+    clearUndo();
+}
+
+void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
+{
+    const int row = loadedRow(id);
+    if (row < 0 || !m_client || !m_auth || !m_auth->isAuthenticated()
+        || m_auth->currentAccessToken().isEmpty()) {
+        return;
+    }
+    const Issue &issue = m_loaded.at(row);
+    // Only forward transitions make sense: closing an open issue or
+    // reopening a closed one. Anything else is a stale UI event.
+    if ((closed && issue.state != QLatin1String("open"))
+        || (!closed && issue.state != QLatin1String("closed"))) {
+        return;
+    }
+    if (m_model->isIssuePending(issue.id)) {
+        return; // Already in flight: double-activation guard.
+    }
+    if (!m_model->setIssuePending(issue.id, true)) {
+        return; // Absent from the visible slice: stale UI event.
+    }
+    const QString token = m_auth->currentAccessToken();
+    const QString login = m_auth->userLogin();
+    const int generation = m_generation;
+    // Copy before any list mutation: references into m_loaded dangle after
+    // removeAt/append/sort.
+    const Issue target = issue;
+    const QString targetNumber = target.qualifiedNumber();
+    m_client->updateIssueState(target.owner, target.repo, target.number, closed, token,
+        [this, id, closed, isUndo, login, generation, target, targetNumber](
+            const GitHubClient::UpdateResult &result) {
+            if (generation != m_generation) {
+                // Superseded by logout, new identity, or a reload: the model
+                // was already reset, so touch nothing.
+                return;
+            }
+            m_model->setIssuePending(id, false);
+            if (!result.ok) {
+                // Keep the list visible: mutation failures are warnings,
+                // not load errors, and the row stays with its old state.
+                m_warningMessage = result.errorMessage.isEmpty()
+                    ? QStringLiteral("Could not update the issue. Please retry.")
+                    : result.errorMessage;
+                Q_EMIT warningChanged();
+                return;
+            }
+            if (m_auth && m_auth->userLogin() != login) {
+                // Identity changed mid-mutation: drop the result rather
+                // than mixing accounts. The new identity's reload (or the
+                // next refresh) reconverges with the server.
+                return;
+            }
+            // Success: the server echoed the requested state, so converge
+            // locally. The issue's state always changed, which never
+            // matches the current state filter — drop the row.
+            const int current = loadedRow(id);
+            if (current >= 0) {
+                m_loaded.removeAt(current);
+                m_model->removeIssue(id);
+                Q_EMIT countsChanged();
+            }
+            if (closed && !isUndo) {
+                // Snapshot the coordinates for one-shot undo.
+                m_undo.id = id;
+                m_undo.owner = target.owner;
+                m_undo.repo = target.repo;
+                m_undo.number = target.number;
+                m_undoMessage = QStringLiteral("Closed %1 — undo?").arg(targetNumber);
+                Q_EMIT undoChanged();
+            } else if (!closed && isUndo) {
+                // Undo reopened the issue: it belongs to the current
+                // filter again, so re-add it sorted by last activity.
+                Issue restored = target;
+                restored.state = QStringLiteral("open");
+                m_loaded.append(restored);
+                std::sort(m_loaded.begin(), m_loaded.end(), [](const Issue &a, const Issue &b) {
+                    if (a.updatedAt.isValid() != b.updatedAt.isValid()) {
+                        return a.updatedAt.isValid();
+                    }
+                    return a.updatedAt > b.updatedAt;
+                });
+                applyRepoFilter();
+                clearUndo();
+            } else {
+                clearUndo();
+            }
+        });
+}
+
+void IssueController::clearUndo()
+{
+    if (m_undo.id == 0 && m_undoMessage.isEmpty()) {
+        return;
+    }
+    m_undo = UndoClose();
+    m_undoMessage.clear();
+    Q_EMIT undoChanged();
+}
+
+int IssueController::loadedRow(qlonglong id) const
+{
+    for (int i = 0; i < m_loaded.size(); ++i) {
+        if (m_loaded.at(i).id == id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void IssueController::clearAllState()
 {
     // Invalidate any in-flight fetch first: its callback must not
@@ -225,5 +367,6 @@ void IssueController::clearAllState()
     clearOutcomeFlags();
     m_lastRefresh = QDateTime();
     Q_EMIT lastRefreshChanged();
+    clearUndo();
     Q_EMIT countsChanged();
 }

@@ -16,6 +16,15 @@ struct IssueHttpResult {
     QString transportError; // network/timeout failure, no secrets
 };
 
+// Single-issue state mutation (close/reopen): PATCH
+// /repos/{owner}/{repo}/issues/{number} with {"state": ...}.
+struct IssueUpdateRequest {
+    QString owner;
+    QString repo;
+    int number = 0;
+    bool closed = false; // true = close, false = reopen
+};
+
 // (No Q_OBJECT: no signals; QObject parenting only.)
 class IIssueApi : public QObject
 {
@@ -27,4 +36,6 @@ public:
 
     virtual void searchIssues(const QUrl &url, const QString &accessToken,
                               std::function<void(IssueHttpResult)> callback) = 0;
+    virtual void updateIssueState(const IssueUpdateRequest &request, const QString &accessToken,
+                                  std::function<void(IssueHttpResult)> callback) = 0;
 };

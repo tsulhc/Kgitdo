@@ -1,7 +1,7 @@
-// ChecklistView: W3 read-only issue checklist on top of the W2 model contract.
+// ChecklistView: W4 interactive issue checklist on top of the W2 model contract.
 // All data and actions come from issueController (view/state/repo filters,
-// loading, outcomes, reload); all sign-in state from authSession.
-// No auth, HTTP, credential, or persistence logic lives here.
+// loading, outcomes, reload, close/reopen/undo); all sign-in state from
+// authSession. No auth, HTTP, credential, or persistence logic lives here.
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as Controls
@@ -171,6 +171,31 @@ ColumnLayout {
         }
     }
 
+    // Undo banner: one-shot reopen offer after a confirmed close.
+    Kirigami.AbstractCard {
+        Layout.fillWidth: true
+        visible: issueController.canUndoClose
+        contentItem: RowLayout {
+            spacing: Kirigami.Units.smallSpacing
+            Controls.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: issueController.undoMessage
+                Accessible.name: text
+            }
+            Controls.Button {
+                text: i18n("Undo")
+                onClicked: issueController.undoLastClose()
+                Accessible.name: text
+            }
+            Controls.Button {
+                text: i18n("Dismiss")
+                onClicked: issueController.dismissUndo()
+                Accessible.name: text
+            }
+        }
+    }
+
     // Loading state (list kept visible underneath when refreshing old data).
     RowLayout {
         Layout.alignment: Qt.AlignHCenter
@@ -204,12 +229,29 @@ ColumnLayout {
                 focus: ListView.isCurrentItem
                 contentItem: RowLayout {
                     spacing: Kirigami.Units.smallSpacing
-                    // W3 is read-only: the box reflects open/closed state and
-                    // becomes interactive with W4 mutations.
+                    // Pessimistic checkbox: the visual reverts immediately
+                    // and only a confirmed server response changes the
+                    // list (the row leaves on success, stays on failure
+                    // with a warning). Success always removes the row, so
+                    // the box never needs to display post-mutation state
+                    // and a broken binding cannot show a stale state.
                     Controls.CheckBox {
                         checked: model.state === "closed"
-                        enabled: false
+                        enabled: !model.pending && !issueController.loading
+                        onClicked: {
+                            checked = model.state === "closed";
+                            if (model.state === "open") {
+                                issueController.closeIssue(model.issueId);
+                            } else {
+                                issueController.reopenIssue(model.issueId);
+                            }
+                        }
                         Accessible.name: model.state === "closed" ? i18n("Closed") : i18n("Open")
+                    }
+                    Controls.BusyIndicator {
+                        visible: model.pending
+                        running: visible
+                        Accessible.name: i18n("Updating issue")
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
