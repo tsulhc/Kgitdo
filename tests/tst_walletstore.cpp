@@ -174,6 +174,8 @@ private Q_SLOTS:
     void clearDisabledAfterSaveReportsFailure();
     void loadArmsDisabledClearFailure();
     void saveSilentWriteLossReportsFailure();
+    void failedSaveArmsDisabledClearFailure();
+    void loadMarkerWithUnreadableAccessArmsDisabledClear();
     void removePolicyDecisionTable();
     void disabledBackendLoadSaveFailClearSucceeds();
 };
@@ -464,8 +466,10 @@ void WalletStoreTest::saveSilentWriteLossReportsFailure()
 {
     // Regression: backends must verify writes by read-back. A backend that
     // acknowledges writes without persisting them must not produce a
-    // claimed success — and such a never-verified save must not arm the
-    // disabled-clear failure either.
+    // claimed success. Such an attempted-but-unverified save may still have
+    // persisted something outside the backend's account of the world, so it
+    // arms the same fail-closed disabled-clear duty as any other attempted
+    // save: logout while disabled must warn, not claim success.
     FakeBackend backend;
     KWalletSecureStore store(nullptr, &backend);
     backend.dropWrites = true;
@@ -473,7 +477,64 @@ void WalletStoreTest::saveSilentWriteLossReportsFailure()
     StoredTokens loaded;
     QVERIFY(!store.load(loaded));
     backend.enabled = false;
+    QVERIFY(!store.clear());
+    backend.enabled = true;
     QVERIFY(store.clear());
+    StoredTokens after;
+    QVERIFY(!store.load(after));
+}
+
+void WalletStoreTest::failedSaveArmsDisabledClearFailure()
+{
+    // Regression: on a fresh instance the commit marker can be removed, an
+    // access write can succeed, a later field write can fail, and the
+    // rollback removal can fail too. The save reports failure but residue
+    // may remain, so a later disabled clear must warn rather than claim
+    // success — even though this instance never completed a verified save.
+    FakeBackend backend;
+    backend.failingWrites.insert(QStringLiteral("refreshToken"));
+    backend.failingRemoves.insert(QStringLiteral("accessToken"));
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(!store.save(makeTokens()));
+    // The access token genuinely survived the failed rollback.
+    QVERIFY(backend.entries.contains(QStringLiteral("accessToken")));
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+    // Disabled: removal can no longer be verified, so report failure.
+    backend.enabled = false;
+    QVERIFY(!store.clear());
+    // Re-enabled: the residue is still there and still unremovable.
+    backend.enabled = true;
+    QVERIFY(!store.clear());
+    // Once removal works, clearing succeeds and nothing is loadable.
+    backend.failingRemoves.clear();
+    QVERIFY(store.clear());
+    StoredTokens after;
+    QVERIFY(!store.load(after));
+}
+
+void WalletStoreTest::loadMarkerWithUnreadableAccessArmsDisabledClear()
+{
+    // Regression: load() used to arm the cleanup duty only after fully
+    // validating the access token. A commit marker with an unreadable
+    // access token is still a potentially persisted session, so observing
+    // the marker alone must arm the fail-closed disabled-clear duty.
+    FakeBackend backend;
+    {
+        KWalletSecureStore first(nullptr, &backend);
+        QVERIFY(first.save(makeTokens()));
+    }
+    backend.failingReads.insert(QStringLiteral("accessToken"));
+    KWalletSecureStore store(nullptr, &backend);
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+    backend.enabled = false;
+    QVERIFY(!store.clear());
+    backend.enabled = true;
+    backend.failingReads.clear();
+    QVERIFY(store.clear());
+    StoredTokens after;
+    QVERIFY(!store.load(after));
 }
 
 void WalletStoreTest::removePolicyDecisionTable()

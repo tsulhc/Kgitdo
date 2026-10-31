@@ -165,6 +165,11 @@ bool KWalletSecureStore::load(StoredTokens &out)
             m_backend->close();
             return false;
         }
+        // The commit marker proves a session was persisted here. Arm the
+        // fail-closed cleanup duty now, before validating the remaining
+        // fields: an unreadable access token must not leave a potentially
+        // persisted session untracked.
+        m_hasPersisted = true;
         QString access;
         if (m_backend->readSecret(QLatin1String(kAccessKey), access) && !access.isEmpty()) {
             StoredTokens tokens;
@@ -183,10 +188,6 @@ bool KWalletSecureStore::load(StoredTokens &out)
             tokens.login = login;
             out = tokens;
             loaded = true;
-            // A committed set was just read back: this instance is now
-            // responsible for credentials that may outlive a later disable,
-            // so cleanup must fail closed until a verified clear resets this.
-            m_hasPersisted = true;
         }
     }
     m_backend->close();
@@ -203,6 +204,12 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
     }
     bool ok = false;
     if (m_backend->selectFolder(true)) {
+        // This instance is about to mutate persisted state, so arm the
+        // fail-closed cleanup duty first: if any write below (or its
+        // rollback) fails, credentials may remain behind, and a later
+        // disabled clear must warn rather than claim success. Arming is
+        // reset only by a verified clear.
+        m_hasPersisted = true;
         // Invalidate any previous commit marker BEFORE writing new fields.
         // Otherwise a save over an existing session whose field writes fail
         // (and whose rollback removals also fail) would leave the old marker
@@ -264,9 +271,6 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         }
     }
     m_backend->close();
-    if (ok) {
-        m_hasPersisted = true;
-    }
     return ok;
 }
 
