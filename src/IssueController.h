@@ -144,6 +144,12 @@ private:
     // corresponds to the failure that armed it — never a load-owned or
     // another mutation's still-relevant outcome.
     qlonglong m_rateLimitedMutationId = 0;
+    // Owner of the current warning message: 0 means fetch-owned (partial
+    // list notes) or no warning, otherwise the mutation id whose failure
+    // set it. A mutation success clears the warning only when it owns it,
+    // so resolving one mutation never retires another mutation's
+    // still-relevant warning.
+    qlonglong m_warningOwnerId = 0;
     QDateTime m_lastRefresh;
     // Login the loaded list belongs to. Compared on each Authenticated
     // transition so a different account signing in without an intermediate

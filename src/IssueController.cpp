@@ -139,6 +139,7 @@ void IssueController::reload()
                                   m_truncated = false;
                                   Q_EMIT outcomeChanged();
                                   m_warningMessage.clear();
+                                  m_warningOwnerId = 0;
                                   Q_EMIT warningChanged();
                                   m_errorMessage = result.errorMessage.isEmpty()
                                       ? QStringLiteral("Could not load issues. Please retry.")
@@ -183,6 +184,8 @@ void IssueController::reload()
                               } else {
                                   m_warningMessage.clear();
                               }
+                              // Fetch-owned in every sub-branch above.
+                              m_warningOwnerId = 0;
                               Q_EMIT warningChanged();
                           });
 }
@@ -220,6 +223,7 @@ void IssueController::clearOutcomeFlags()
     m_rateLimited = false;
     m_retryAfterSecs = 0;
     m_rateLimitedMutationId = 0;
+    m_warningOwnerId = 0;
     Q_EMIT outcomeChanged();
 }
 
@@ -361,6 +365,9 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 m_warningMessage = result.errorMessage.isEmpty()
                     ? QStringLiteral("Could not update the issue. Please retry.")
                     : result.errorMessage;
+                // This mutation owns the message it just set, whatever its
+                // kind: a later success clears it only for the same id.
+                m_warningOwnerId = id;
                 Q_EMIT warningChanged();
                 return;
             }
@@ -384,8 +391,14 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 m_retryAfterSecs = 0;
                 m_rateLimitedMutationId = 0;
                 Q_EMIT outcomeChanged();
-                m_warningMessage.clear();
-                Q_EMIT warningChanged();
+                // Clear the warning only when this mutation also owns it:
+                // a sibling mutation's failure message stays until its own
+                // owner resolves it.
+                if (m_warningOwnerId == id) {
+                    m_warningMessage.clear();
+                    m_warningOwnerId = 0;
+                    Q_EMIT warningChanged();
+                }
             }
             if (closed && !isUndo) {
                 // Snapshot the coordinates for one-shot undo.

@@ -163,11 +163,11 @@ ColumnLayout {
             Controls.Label {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                // Machine-readable countdown for 429/rate-limit failures:
-                // the controller sets retryAfterSecs from the Retry-After
-                // / rate-limit-reset headers.
+                // Server-provided retry delay for 429/rate-limit failures:
+                // a static statement of the suggested wait, not a live
+                // countdown — nothing ticks it down in the UI.
                 visible: issueController.rateLimited && issueController.retryAfterSecs > 0
-                text: i18n("Retry available in %1 seconds.", issueController.retryAfterSecs)
+                text: i18n("GitHub rate limit reached. Suggested retry delay: %1 seconds.", issueController.retryAfterSecs)
                 Accessible.name: text
             }
             Controls.Label {
