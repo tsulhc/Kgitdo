@@ -9,6 +9,14 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
     , m_model(new IssueListModel(this))
 {
     if (m_auth) {
+        // Seed the identity the controller is constructed under: restore()
+        // may have completed (and emitted Authenticated) before this
+        // controller connected, so without seeding the next return to
+        // Authenticated — e.g. a routine token refresh — would look like a
+        // new identity and wipe + needlessly reload a valid list.
+        if (m_auth->isAuthenticated()) {
+            m_lastLogin = m_auth->userLogin();
+        }
         // Signing out invalidates the token the list was loaded with:
         // drop everything rather than showing another user's tasks.
         // Only an actual sign-out clears: Refreshing is a transient
