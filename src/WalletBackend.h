@@ -9,8 +9,10 @@
 // decision point to review. Fail-closed: an API-reported removal failure is
 // a failure unless absence is confirmed by two agreeing oracles (not listed
 // AND unreadable); an API-reported success is additionally verified by
-// unreadability, so a silent non-removal is still reported as a failure.
-// Read errors alone never prove absence.
+// delisting AND unreadability, so a silent non-removal or a stale success
+// code is still reported as a failure. Read errors alone never prove
+// absence, and a listing alone never proves presence — both oracles must
+// agree the key is gone.
 namespace WalletRemovePolicy
 {
 inline bool confirmRemoved(bool removeSucceeded, bool hasEntry, bool secretReadable, bool blobReadable)
@@ -18,7 +20,7 @@ inline bool confirmRemoved(bool removeSucceeded, bool hasEntry, bool secretReada
     if (!removeSucceeded) {
         return !hasEntry && !secretReadable && !blobReadable;
     }
-    return !secretReadable && !blobReadable;
+    return !hasEntry && !secretReadable && !blobReadable;
 }
 } // namespace WalletRemovePolicy
 

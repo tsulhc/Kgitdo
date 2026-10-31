@@ -22,6 +22,9 @@ public:
     // Simulates wallet read errors: reads of these keys fail even when the
     // entry exists, mirroring a wallet that errors mid-operation.
     QSet<QString> failingReads;
+    // Simulates a stale folder listing: these keys are reported as present
+    // even after removal, mirroring a wallet whose entry list lags reads.
+    QSet<QString> staleListed;
     QStringList removedKeys;
     bool wasOpened = false;
 
@@ -108,7 +111,7 @@ public:
         if (removeSucceeded) {
             entries.remove(key);
         }
-        const bool listed = entries.contains(key);
+        const bool listed = entries.contains(key) || staleListed.contains(key);
         QString secret;
         QByteArray blob;
         const bool secretReadable = readSecret(key, secret);
@@ -157,6 +160,7 @@ private Q_SLOTS:
     void clearOpenFailureReportsFailure();
     void clearRemoveFailureReportsFailure();
     void clearApiFailureWithUnreadableStateReportsFailure();
+    void clearStaleListingWithUnreadableStateReportsFailure();
     void clearAbsentKeysDespiteApiErrorsReportsSuccess();
     void removePolicyDecisionTable();
     void disabledBackendLoadSaveFailClearSucceeds();
@@ -361,6 +365,29 @@ void WalletStoreTest::clearApiFailureWithUnreadableStateReportsFailure()
     QVERIFY(!store.load(loaded));
 }
 
+void WalletStoreTest::clearStaleListingWithUnreadableStateReportsFailure()
+{
+    // Regression: the success branch ignored the folder listing, so a stale
+    // API success code with the key still listed (and reads erroring) was
+    // reported as removed. Removal is confirmed only when the key is
+    // delisted AND unreadable.
+    FakeBackend backend;
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.save(makeTokens()));
+    backend.staleListed.insert(QStringLiteral("accessToken"));
+    backend.failingReads.insert(QStringLiteral("accessToken"));
+    backend.failingReads.insert(QStringLiteral("refreshToken"));
+    backend.failingReads.insert(QStringLiteral("accessExpiresAt"));
+    backend.failingReads.insert(QStringLiteral("login"));
+    backend.failingReads.insert(QStringLiteral("committed"));
+    QVERIFY(!store.clear());
+    // The entry is physically gone, but the stale listing means absence is
+    // unverified: the caller must warn and offer retry, not claim success.
+    QVERIFY(!backend.entries.contains(QStringLiteral("accessToken")));
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+}
+
 void WalletStoreTest::clearAbsentKeysDespiteApiErrorsReportsSuccess()
 {
     // Absence tolerance: removing keys that are not there (e.g. the commit
@@ -393,6 +420,9 @@ void WalletStoreTest::removePolicyDecisionTable()
     // also error (read errors never prove absence).
     QVERIFY(!confirmRemoved(false, true, false, false));
     QVERIFY(!confirmRemoved(false, true, true, true));
+    // Reported success with the key still listed but unreadable: a stale
+    // success code must not overstate removal.
+    QVERIFY(!confirmRemoved(true, true, false, false));
     // Reported failure, unlisted, but still readable: contradictory state,
     // fail closed.
     QVERIFY(!confirmRemoved(false, false, true, false));
