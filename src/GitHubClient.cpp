@@ -70,7 +70,8 @@ GitHubClient::MappedResponse GitHubClient::mapSearchResponse(const IssueHttpResu
         }
         out.errorMessage = message.isEmpty()
             ? QStringLiteral("GitHub refused the request. Check the app installation and retry.")
-            : QStringLiteral("GitHub refused the request: %1").arg(message);
+            : QStringLiteral("GitHub refused the request: %1 Check the app installation and retry.")
+                  .arg(message);
         return out;
     }
     if (status == 404) {
@@ -139,10 +140,15 @@ GitHubClient::UpdateResult GitHubClient::mapUpdateResponse(const IssueHttpResult
             return out;
         }
         out.forbidden = true;
+        // Always mention the installation: integration 403s ("Resource not
+        // accessible by integration", "Must have push access") mean the app
+        // lacks permission on this repository even when GitHub explains why.
         out.errorMessage = message.isEmpty()
             ? QStringLiteral(
                   "GitHub refused the change: check the app installation on this repository and your access.")
-            : QStringLiteral("GitHub refused the change: %1").arg(message);
+            : QStringLiteral("GitHub refused the change: %1 Check the app installation on this repository "
+                             "and your access.")
+                  .arg(message);
         return out;
     }
     if (status == 404) {
