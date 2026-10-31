@@ -123,7 +123,17 @@ void IssueController::reload()
                               m_retryAfterSecs = result.retryAfterSecs;
                               Q_EMIT outcomeChanged();
                               if (!result.ok) {
-                                  clearOutcomeFlags();
+                                  // A failed load carries no data, so the
+                                  // partial-data flags are meaningless — but
+                                  // the server condition still stands: a rate
+                                  // limit governs when retry is allowed, and
+                                  // the outcome card counts down next to the
+                                  // error. Preserve rateLimited/retryAfterSecs
+                                  // (assigned from result above).
+                                  m_incomplete = false;
+                                  m_capped = false;
+                                  m_truncated = false;
+                                  Q_EMIT outcomeChanged();
                                   m_warningMessage.clear();
                                   Q_EMIT warningChanged();
                                   m_errorMessage = result.errorMessage.isEmpty()
@@ -324,10 +334,15 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
             if (!result.ok) {
                 // Keep the list visible: mutation failures are warnings,
                 // not load errors, and the row stays with its old state.
+                // A rate limit still governs retry timing, so propagate it
+                // for the outcome countdown like the load path does.
                 m_mutationGuard.remove(id);
                 if (isUndo) {
                     m_undoInFlight = false;
                 }
+                m_rateLimited = result.rateLimited;
+                m_retryAfterSecs = result.retryAfterSecs;
+                Q_EMIT outcomeChanged();
                 m_warningMessage = result.errorMessage.isEmpty()
                     ? QStringLiteral("Could not update the issue. Please retry.")
                     : result.errorMessage;
