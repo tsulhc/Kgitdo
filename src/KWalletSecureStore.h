@@ -28,8 +28,8 @@ private:
     IWalletBackend *m_backend = nullptr;
     // Unknown-unless-verified-empty: true until this instance establishes
     // that no credentials are persisted — a verified clear, an absent
-    // folder, or a folder provably carrying no commit marker. Starts true
-    // because credentials from an earlier run may exist even if this
+    // folder, or a folder provably carrying no credential entries. Starts
+    // true because credentials from an earlier run may exist even if this
     // process never saved: a disabled/unopenable wallet (or an
     // unselectable folder) teaches nothing, so a later disabled clear must
     // warn rather than claim success. Reset only by a verified clear (or by
@@ -37,4 +37,11 @@ private:
     // observing a commit marker, so cleanup fails closed whenever
     // credentials may remain but removal can no longer be verified.
     bool m_hasPersisted = true;
+    // True only when every credential key is both unlisted and unreadable
+    // (two agreeing oracles per key, mirroring WalletRemovePolicy). A
+    // non-marker commit value alone proves only that no session is
+    // accepted — residue from an interrupted save may still be present —
+    // so emptiness requires the credential entries themselves to be gone.
+    // Call only after open() + selectFolder().
+    bool credentialEntriesAbsent();
 };

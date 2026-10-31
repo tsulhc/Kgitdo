@@ -69,6 +69,11 @@ public:
         return hasFolder;
     }
 
+    bool hasEntry(const QString &key) override
+    {
+        return entries.contains(key) || staleListed.contains(key);
+    }
+
     bool readSecret(const QString &key, QString &value) override
     {
         if (failingReads.contains(key) || !entries.contains(key)) {
@@ -178,7 +183,10 @@ private Q_SLOTS:
     void loadMarkerWithUnreadableAccessArmsDisabledClear();
     void removePolicyDecisionTable();
     void loadAbsentFolderEstablishesEmpty();
+    void loadEmptyFolderEstablishesEmpty();
     void loadWrongMarkerEstablishesEmpty();
+    void loadWrongMarkerWithResidueKeepsArmed();
+    void loadStaleListingKeepsArmed();
     void loadUnselectableFolderKeepsUnknownState();
     void disabledBackendFreshInstanceFailsClosed();
 };
@@ -577,12 +585,27 @@ void WalletStoreTest::loadAbsentFolderEstablishesEmpty()
     QVERIFY(store.clear());
 }
 
+void WalletStoreTest::loadEmptyFolderEstablishesEmpty()
+{
+    // Reachable UX case: the folder exists but carries nothing of ours
+    // (e.g. created by an aborted save before any write). No credential
+    // entry is listed or readable, so emptiness is established and a later
+    // disabled clear stays silent instead of warning about nothing.
+    FakeBackend backend;
+    backend.hasFolder = true;
+    KWalletSecureStore store(nullptr, &backend);
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+    backend.enabled = false;
+    QVERIFY(store.clear());
+}
+
 void WalletStoreTest::loadWrongMarkerEstablishesEmpty()
 {
-    // Folder exists but carries no valid commit marker: a successfully read
-    // non-marker value proves no committed session exists, so a later
-    // disabled clear stays silent. Unloadable residue without a marker is
-    // harmless by construction (load() requires the marker).
+    // Folder carries a non-marker commit value but no credential entries:
+    // both oracles agree every credential key is gone, so emptiness is
+    // established and a later disabled clear stays silent. A wrong marker
+    // alone proves only that no session is accepted — the entries decide.
     FakeBackend backend;
     backend.hasFolder = true;
     backend.entries.insert(QStringLiteral("committed"), QByteArray("0"));
@@ -591,6 +614,46 @@ void WalletStoreTest::loadWrongMarkerEstablishesEmpty()
     QVERIFY(!store.load(loaded));
     backend.enabled = false;
     QVERIFY(store.clear());
+}
+
+void WalletStoreTest::loadWrongMarkerWithResidueKeepsArmed()
+{
+    // Finding regression: a non-marker commit value with surviving
+    // credential entries (interrupted save with failed rollback) must keep
+    // cleanup armed. A later disabled clear must warn, not claim success
+    // over the remaining token; once the wallet is back, clearing is
+    // verifiable and the residue is actually removed.
+    FakeBackend backend;
+    backend.hasFolder = true;
+    backend.entries.insert(QStringLiteral("committed"), QByteArray("0"));
+    backend.entries.insert(QStringLiteral("accessToken"), QByteArray("ghu_old"));
+    KWalletSecureStore store(nullptr, &backend);
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+    backend.enabled = false;
+    QVERIFY(!store.clear());
+    backend.enabled = true;
+    QVERIFY(store.clear());
+    QVERIFY(!backend.entries.contains(QStringLiteral("accessToken")));
+    StoredTokens after;
+    QVERIFY(!store.load(after));
+}
+
+void WalletStoreTest::loadStaleListingKeepsArmed()
+{
+    // A stale folder listing (key listed but unreadable) is not proof of
+    // presence, but it is also not proof of absence: cleanup stays armed
+    // until listing AND reads agree the entries are gone.
+    FakeBackend backend;
+    backend.hasFolder = true;
+    backend.entries.insert(QStringLiteral("committed"), QByteArray("0"));
+    backend.staleListed.insert(QStringLiteral("accessToken"));
+    backend.failingReads.insert(QStringLiteral("accessToken"));
+    KWalletSecureStore store(nullptr, &backend);
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+    backend.enabled = false;
+    QVERIFY(!store.clear());
 }
 
 void WalletStoreTest::loadUnselectableFolderKeepsUnknownState()

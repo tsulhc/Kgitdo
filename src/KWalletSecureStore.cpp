@@ -70,6 +70,11 @@ public:
         return m_wallet && m_wallet->hasFolder(QLatin1String(kFolder));
     }
 
+    bool hasEntry(const QString &key) override
+    {
+        return m_wallet && m_wallet->hasEntry(key);
+    }
+
     bool readSecret(const QString &key, QString &value) override
     {
         if (!m_wallet) {
@@ -147,6 +152,24 @@ QString KWalletSecureStore::backendName() const
     return QStringLiteral("kwallet");
 }
 
+bool KWalletSecureStore::credentialEntriesAbsent()
+{
+    // Both oracles must agree per key: not listed AND unreadable. A listing
+    // alone never proves presence and a read error alone never proves
+    // absence, so either oracle reporting a key keeps cleanup armed.
+    QString secret;
+    QByteArray blob;
+    const bool accessGone = !m_backend->hasEntry(QLatin1String(kAccessKey))
+        && !m_backend->readSecret(QLatin1String(kAccessKey), secret);
+    const bool refreshGone = !m_backend->hasEntry(QLatin1String(kRefreshKey))
+        && !m_backend->readSecret(QLatin1String(kRefreshKey), secret);
+    const bool loginGone = !m_backend->hasEntry(QLatin1String(kLoginKey))
+        && !m_backend->readSecret(QLatin1String(kLoginKey), secret);
+    const bool expiresGone = !m_backend->hasEntry(QLatin1String(kExpiresKey))
+        && !m_backend->readBlob(QLatin1String(kExpiresKey), blob);
+    return accessGone && refreshGone && loginGone && expiresGone;
+}
+
 bool KWalletSecureStore::load(StoredTokens &out)
 {
     if (!m_backend || !m_backend->isEnabled()) {
@@ -170,10 +193,12 @@ bool KWalletSecureStore::load(StoredTokens &out)
         if (!commitRead || commit != QByteArray(kCommitValue)) {
             // No commit marker: absent session or interrupted/rolled-back
             // save. Never accept partial credentials as a session. A
-            // successfully read non-marker value establishes that no
-            // committed session exists; a failed read teaches nothing, so
-            // the fail-closed duty stays armed.
-            if (commitRead) {
+            // non-marker value alone does NOT establish emptiness — residue
+            // from an interrupted save may still be present — so stand the
+            // cleanup duty down only when the credential entries themselves
+            // are provably gone (listing and reads agree per key); a failed
+            // read teaches nothing, so the duty stays armed.
+            if (credentialEntriesAbsent()) {
                 m_hasPersisted = false;
             }
             m_backend->close();
