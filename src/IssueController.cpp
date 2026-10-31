@@ -116,27 +116,24 @@ void IssueController::reload()
                                   reload();
                                   return;
                               }
-                              m_incomplete = result.incomplete;
-                              m_capped = result.capped;
-                              m_truncated = result.truncated;
-                              m_rateLimited = result.rateLimited;
-                              m_retryAfterSecs = result.retryAfterSecs;
-                              // Fetch-owned outcome: a later mutation success
-                              // must not retire it (partial-list or load
-                              // warnings stay until the next load resolves).
-                              m_rateLimitedMutationId = 0;
-                              Q_EMIT outcomeChanged();
                               if (!result.ok) {
                                   // A failed load carries no data, so the
-                                  // partial-data flags are meaningless — but
-                                  // the server condition still stands: a rate
-                                  // limit governs when retry is allowed, and
-                                  // the outcome card counts down next to the
-                                  // error. Preserve rateLimited/retryAfterSecs
-                                  // (assigned from result above).
+                                  // partial-data flags are meaningless. The
+                                  // rate-limit fields are touched only when
+                                  // this fetch establishes its own
+                                  // rate-limit outcome: a non-rate failure
+                                  // says nothing about an outcome another
+                                  // mutation may own, so existing flags and
+                                  // owner are preserved in that case.
                                   m_incomplete = false;
                                   m_capped = false;
                                   m_truncated = false;
+                                  if (result.rateLimited) {
+                                      m_rateLimited = true;
+                                      m_retryAfterSecs = result.retryAfterSecs;
+                                      // Fetch-owned outcome (see below).
+                                      m_rateLimitedMutationId = 0;
+                                  }
                                   Q_EMIT outcomeChanged();
                                   m_warningMessage.clear();
                                   m_warningOwnerId = 0;
@@ -147,6 +144,16 @@ void IssueController::reload()
                                   Q_EMIT errorMessageChanged();
                                   return;
                               }
+                              m_incomplete = result.incomplete;
+                              m_capped = result.capped;
+                              m_truncated = result.truncated;
+                              m_rateLimited = result.rateLimited;
+                              m_retryAfterSecs = result.retryAfterSecs;
+                              // Fetch-owned outcome: a later mutation success
+                              // must not retire it (partial-list or load
+                              // warnings stay until the next load resolves).
+                              m_rateLimitedMutationId = 0;
+                              Q_EMIT outcomeChanged();
                               m_loaded = result.issues;
                               QSet<QString> repos;
                               for (const Issue &issue : m_loaded) {
