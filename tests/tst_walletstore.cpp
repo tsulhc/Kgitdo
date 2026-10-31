@@ -117,6 +117,16 @@ static StoredTokens makeTokens()
     return tokens;
 }
 
+static StoredTokens makeTokensAlt()
+{
+    StoredTokens tokens;
+    tokens.accessToken = QStringLiteral("ghu_rotated");
+    tokens.refreshToken = QStringLiteral("ghr_rotated");
+    tokens.accessExpiresAtSecsSinceEpoch = 1800000000;
+    tokens.login = QStringLiteral("monalisa");
+    return tokens;
+}
+
 class WalletStoreTest : public QObject
 {
     Q_OBJECT
@@ -126,6 +136,8 @@ private Q_SLOTS:
     void saveEmptyAccessFails();
     void savePartialFailureRollsBack();
     void saveCommitWriteFailureLeavesUnloadableState();
+    void saveStaleMarkerInvalidatedBeforeFields();
+    void saveMarkerRemovalFailureAbortsKeepingPreviousSession();
     void saveOpenFailureReportsFailure();
     void clearRemovesEverything();
     void clearWithoutFolderReportsSuccess();
@@ -191,9 +203,49 @@ void WalletStoreTest::saveCommitWriteFailureLeavesUnloadableState()
     QVERIFY(!store.save(makeTokens()));
     // The access token genuinely survived the failed rollback...
     QVERIFY(backend.entries.contains(QStringLiteral("accessToken")));
-    // ...yet load() must not accept it without the commit marker.
+void WalletStoreTest::saveStaleMarkerInvalidatedBeforeFields()
+{
+    // Regression: save() wrote new fields before refreshing the commit
+    // marker, so a save over an existing session whose field writes failed
+    // (and whose rollback removals also failed) left the OLD marker in place
+    // and load() accepted the resulting mixed credentials. The marker is now
+    // invalidated first and rewritten only after a fully written field set.
+    FakeBackend backend;
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.save(makeTokens()));
+    StoredTokens check;
+    QVERIFY(store.load(check));
+    QCOMPARE(check.login, QStringLiteral("octocat"));
+
+    backend.failingWrites.insert(QStringLiteral("refreshToken"));
+    backend.failingRemoves.insert(QStringLiteral("accessToken"));
+    QVERIFY(!store.save(makeTokensAlt()));
+    // The new access token genuinely survived the failed rollback...
+    QVERIFY(backend.entries.contains(QStringLiteral("accessToken")));
+    QCOMPARE(backend.entries.value(QStringLiteral("accessToken")),
+             QByteArray("ghu_rotated"));
+    // ...yet without a commit marker the leftovers are unloadable: neither
+    // the old session nor a half-rotated mix may be accepted.
+    QVERIFY(!backend.entries.contains(QStringLiteral("committed")));
     StoredTokens loaded;
     QVERIFY(!store.load(loaded));
+}
+
+void WalletStoreTest::saveMarkerRemovalFailureAbortsKeepingPreviousSession()
+{
+    // When the old marker itself cannot be removed, save() aborts before
+    // touching any field: the previous complete session stays intact (still
+    // loadable, never mixed), while the caller sees failure and AuthSession
+    // keeps the fresh tokens volatile for this process only.
+    FakeBackend backend;
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.save(makeTokens()));
+    backend.failingRemoves.insert(QStringLiteral("committed"));
+    QVERIFY(!store.save(makeTokensAlt()));
+    StoredTokens loaded;
+    QVERIFY(store.load(loaded));
+    QCOMPARE(loaded.login, QStringLiteral("octocat"));
+    QCOMPARE(loaded.accessToken, QStringLiteral("ghu_saved"));
 }
 
 void WalletStoreTest::saveOpenFailureReportsFailure()

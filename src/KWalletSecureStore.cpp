@@ -185,6 +185,17 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
     }
     bool ok = false;
     if (m_backend->selectFolder(true)) {
+        // Invalidate any previous commit marker BEFORE writing new fields.
+        // Otherwise a save over an existing session whose field writes fail
+        // (and whose rollback removals also fail) would leave the old marker
+        // in place and load() would accept the resulting mixed credentials.
+        // If the old marker cannot be removed, abort without touching the
+        // fields: the previous complete session (or nothing) remains, which
+        // load() treats as before, never as a half-updated mix.
+        if (!m_backend->remove(QLatin1String(kCommitKey))) {
+            m_backend->close();
+            return false;
+        }
         const bool accessOk =
             m_backend->writeSecret(QLatin1String(kAccessKey), tokens.accessToken);
         const bool refreshOk =
@@ -192,9 +203,15 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         const bool loginOk = m_backend->writeSecret(QLatin1String(kLoginKey), tokens.login);
         const bool expiresOk = m_backend->writeBlob(
             QLatin1String(kExpiresKey), QByteArray::number(tokens.accessExpiresAtSecsSinceEpoch));
-        const bool commitOk =
-            m_backend->writeBlob(QLatin1String(kCommitKey), QByteArray(kCommitValue));
-        ok = accessOk && refreshOk && loginOk && expiresOk && commitOk;
+        // Commit only a fully written field set: the marker must never be
+        // (re)written alongside failed fields.
+        const bool fieldsOk = accessOk && refreshOk && loginOk && expiresOk;
+        bool commitOk = false;
+        if (fieldsOk) {
+            commitOk =
+                m_backend->writeBlob(QLatin1String(kCommitKey), QByteArray(kCommitValue));
+        }
+        ok = fieldsOk && commitOk;
         if (!ok) {
             // Roll back partial writes: never leave mixed or half-rotated
             // credentials behind for a later launch to pick up. Removal is
