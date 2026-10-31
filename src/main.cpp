@@ -12,8 +12,11 @@
 
 #include "AuthSession.h"
 #include "GitHubAppConfig.h"
+#include "GitHubClient.h"
+#include "IssueController.h"
 #include "KWalletSecureStore.h"
 #include "QNetworkAuthTransport.h"
+#include "QNetworkIssueApi.h"
 
 int main(int argc, char *argv[])
 {
@@ -38,9 +41,16 @@ int main(int argc, char *argv[])
     auto *authSession = new AuthSession(network, store, &app);
     authSession->setClientId(GitHubAppConfig::clientIdFromEnvironment());
 
+    // W2: issue reading. The controller owns no UI; W3 builds the
+    // checklist view on top of its model and filter properties.
+    auto *issueApi = new QNetworkIssueApi(&app);
+    auto *gitHubClient = new GitHubClient(issueApi, &app);
+    auto *issueController = new IssueController(authSession, gitHubClient, &app);
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
     engine.rootContext()->setContextProperty(QStringLiteral("authSession"), authSession);
+    engine.rootContext()->setContextProperty(QStringLiteral("issueController"), issueController);
     engine.rootContext()->setContextProperty(QStringLiteral("manageInstallationsUrl"),
                                              GitHubAppConfig::manageInstallationsUrl());
     engine.loadFromModule(QStringLiteral("org.kde.kgitdo"), QStringLiteral("Main"));

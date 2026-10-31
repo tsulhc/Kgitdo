@@ -25,6 +25,30 @@ target_link_libraries(kgitdoauth PUBLIC
     KF6::CoreAddons
 )
 
+add_library(kgitdoissues STATIC
+    GitHubClient.cpp
+    GitHubClient.h
+    Issue.h
+    IssueApi.h
+    IssueController.cpp
+    IssueController.h
+    IssueListModel.cpp
+    IssueListModel.h
+    IssueQuery.cpp
+    IssueQuery.h
+    QNetworkIssueApi.cpp
+    QNetworkIssueApi.h
+)
+
+target_include_directories(kgitdoissues PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(kgitdoissues PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Network
+    kgitdoauth
+)
+
 add_executable(kgitdo)
 
 ecm_add_qml_module(kgitdo
@@ -41,6 +65,7 @@ ecm_target_qml_sources(kgitdo SOURCES
 
 target_link_libraries(kgitdo PRIVATE
     kgitdoauth
+    kgitdoissues
     Qt6::Quick
     Qt6::Qml
     Qt6::Gui

@@ -37,3 +37,35 @@ target_link_libraries(tst_walletstore PRIVATE
 )
 add_test(NAME tst_walletstore COMMAND tst_walletstore)
 set_tests_properties(tst_walletstore PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(tst_issuequery tst_issuequery.cpp)
+target_link_libraries(tst_issuequery PRIVATE
+    kgitdoissues
+    Qt6::Test
+)
+add_test(NAME tst_issuequery COMMAND tst_issuequery)
+set_tests_properties(tst_issuequery PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(tst_githubclient tst_githubclient.cpp)
+target_link_libraries(tst_githubclient PRIVATE
+    kgitdoissues
+    Qt6::Test
+)
+add_test(NAME tst_githubclient COMMAND tst_githubclient)
+set_tests_properties(tst_githubclient PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(tst_issuemodel tst_issuemodel.cpp)
+target_link_libraries(tst_issuemodel PRIVATE
+    kgitdoissues
+    Qt6::Test
+)
+add_test(NAME tst_issuemodel COMMAND tst_issuemodel)
+set_tests_properties(tst_issuemodel PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(tst_issuecontroller tst_issuecontroller.cpp)
+target_link_libraries(tst_issuecontroller PRIVATE
+    kgitdoissues
+    Qt6::Test
+)
+add_test(NAME tst_issuecontroller COMMAND tst_issuecontroller)
+set_tests_properties(tst_issuecontroller PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
