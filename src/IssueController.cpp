@@ -359,6 +359,18 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
             }
             // Success: the server echoed the requested state.
             m_mutationGuard.remove(id);
+            // A success proves the server condition behind a previous
+            // mutation failure is over: retire a stale rate-limit outcome
+            // so the countdown cannot linger next to fresh state. Other
+            // warnings (e.g. partial-list notes from the last load) are
+            // load-scoped and stay untouched.
+            if (m_rateLimited) {
+                m_rateLimited = false;
+                m_retryAfterSecs = 0;
+                Q_EMIT outcomeChanged();
+                m_warningMessage.clear();
+                Q_EMIT warningChanged();
+            }
             if (closed && !isUndo) {
                 // Snapshot the coordinates for one-shot undo.
                 m_undo.id = id;
