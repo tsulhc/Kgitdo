@@ -26,6 +26,12 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
             m_model->setIssues({});
             m_availableRepos.clear();
             Q_EMIT availableReposChanged();
+            // A leftover filter would silently hide the next account's
+            // issues after re-login, so reset it and notify observers.
+            if (!m_repoFilter.isEmpty()) {
+                m_repoFilter.clear();
+                Q_EMIT repoFilterChanged();
+            }
             m_errorMessage.clear();
             Q_EMIT errorMessageChanged();
             m_warningMessage.clear();

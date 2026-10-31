@@ -158,6 +158,7 @@ private Q_SLOTS:
     void viewChangeMidLoadRefetches();
     void logoutMidLoadDiscardsResult();
     void logoutClearsList();
+    void logoutClearsRepoFilter();
     void signedOutReloadErrors();
 };
 
@@ -409,6 +410,26 @@ void IssueControllerTest::logoutClearsList()
     QCOMPARE(controller.loadedCount(), 0);
     QCOMPARE(controller.visibleCount(), 0);
     QVERIFY(controller.errorMessage().isEmpty());
+}
+
+void IssueControllerTest::logoutClearsRepoFilter()
+{
+    // A repository filter left over from a previous account would silently
+    // hide the next account's issues after re-login, so logout resets it.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r1"), itemJson(2, 2, "B", "o/r2")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 2);
+    controller.setRepoFilter(QStringLiteral("o/r1"));
+    QCOMPARE(controller.visibleCount(), 1);
+    auth->logout();
+    QVERIFY(controller.repoFilter().isEmpty());
+    QCOMPARE(controller.loadedCount(), 0);
+    QCOMPARE(controller.visibleCount(), 0);
 }
 
 void IssueControllerTest::signedOutReloadErrors()
