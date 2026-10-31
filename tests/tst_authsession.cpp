@@ -332,7 +332,7 @@ void AuthSessionTest::badRefreshTokenRequiresRelogin()
     session.pollOnce();
     QCOMPARE(session.status(), AuthSession::Authenticated);
 
-    TokenResult bad;
+    IAuthNetwork::TokenResult bad;
     bad.ok = false;
     bad.data.hasToken = false;
     bad.data.errorCode = QStringLiteral("bad_refresh_token");
