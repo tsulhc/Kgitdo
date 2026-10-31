@@ -415,15 +415,16 @@ void GitHubClientTest::crossOriginRedirectIsNotFollowed()
     });
 
     QNetworkIssueApi api;
+    IIssueApi &apiRef = api;
     QEventLoop loop;
     IssueHttpResult got;
     bool called = false;
-    api.searchIssues(QUrl(QStringLiteral("http://127.0.0.1:%1/start").arg(redirectorPort)),
-                     QStringLiteral("SECRET"), [&](const IssueHttpResult &r) {
-                         got = r;
-                         called = true;
-                         loop.quit();
-                     });
+    apiRef.searchIssues(QUrl(QStringLiteral("http://127.0.0.1:%1/start").arg(redirectorPort)),
+                        QStringLiteral("SECRET"), [&](const IssueHttpResult &r) {
+                            got = r;
+                            called = true;
+                            loop.quit();
+                        });
     QTimer::singleShot(5000, &loop, &QEventLoop::quit);
     loop.exec();
     QVERIFY(called);
