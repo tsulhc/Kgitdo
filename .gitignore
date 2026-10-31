@@ -1,0 +1,21 @@
+# Out-of-source CMake/Qt builds
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+Makefile
+
+# IDE/editor and temporary files
+*.user
+*.user.*
+*.autosave
+*~
+*.swp
+*.swo
+*.orig
+.DS_Store
