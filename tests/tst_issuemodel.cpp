@@ -37,7 +37,18 @@ void IssueListModelTest::rolesAndData()
     QCOMPARE(model.data(row, IssueListModel::AuthoredByMeRole).toBool(), false);
     QVERIFY(!model.data(row, 9999).isValid()); // unknown role
     QVERIFY(!model.data(model.index(5), IssueListModel::TitleRole).isValid()); // out of range
-    QVERIFY(model.roleNames().value(IssueListModel::TitleRole) == QByteArray("title"));
+    // QML contract: ChecklistView binds these role names directly.
+    const QHash<int, QByteArray> names = model.roleNames();
+    QCOMPARE(names.value(IssueListModel::TitleRole), QByteArray("title"));
+    QCOMPARE(names.value(IssueListModel::QualifiedNumberRole), QByteArray("qualifiedNumber"));
+    QCOMPARE(names.value(IssueListModel::RepoFullNameRole), QByteArray("repoFullName"));
+    QCOMPARE(names.value(IssueListModel::StateRole), QByteArray("state"));
+    QCOMPARE(names.value(IssueListModel::LabelsRole), QByteArray("labels"));
+    QCOMPARE(names.value(IssueListModel::HtmlUrlRole), QByteArray("htmlUrl"));
+    QCOMPARE(names.value(IssueListModel::UpdatedAtRole), QByteArray("updatedAt"));
+    QCOMPARE(names.value(IssueListModel::AssignedToMeRole), QByteArray("isAssignedToMe"));
+    QCOMPARE(names.value(IssueListModel::AuthoredByMeRole), QByteArray("isAuthoredByMe"));
+    QCOMPARE(names.value(IssueListModel::PendingRole), QByteArray("pending"));
 }
 
 void IssueListModelTest::emptyModel()

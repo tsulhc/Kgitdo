@@ -61,6 +61,7 @@ target_sources(kgitdo PRIVATE
 
 ecm_target_qml_sources(kgitdo SOURCES
     Main.qml
+    ChecklistView.qml
 )
 
 target_link_libraries(kgitdo PRIVATE
