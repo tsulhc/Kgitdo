@@ -32,6 +32,7 @@ enum class State {
 enum class QueryKind {
     Authored, // item arrived via author:<login>
     Assigned, // item arrived via assignee:<login>
+    Unknown, // provenance not established: sets neither flag
 };
 
 // One search query string for the given view (two for View::All, in
@@ -69,6 +70,20 @@ QUrl extractNextLinkRaw(const QByteArray &linkHeader);
 
 // Bearer-token issue requests may only target the GitHub API origin.
 bool isAllowedIssueApiUrl(const QUrl &url);
+
+// PATCH https://api.github.com/repos/{owner}/{repo}/issues/{number}:
+// the single-issue mutation endpoint (plan §3.3). Invalid (empty) URL when
+// the coordinates are missing or the path cannot be encoded.
+QUrl buildIssueUpdateUrl(const QString &owner, const QString &repo, int number);
+
+// Minimal mutation body: only the state changes, nothing else is
+// overwritten. Closing marks the issue completed; reopening sends no
+// state_reason (it only applies when closing).
+QByteArray buildIssueUpdateBody(bool closed);
+
+// Parse the PATCH response: success requires the returned `state` to match
+// the requested one. False on malformed bodies or unknown states.
+bool parseUpdatedIssueState(const QByteArray &body, QString *stateOut);
 
 // True when the search result set cannot be complete: the Search API caps
 // every query at 1.000 results.

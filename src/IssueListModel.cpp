@@ -77,3 +77,59 @@ void IssueListModel::setIssues(const QList<Issue> &issues)
     m_issues = issues;
     endResetModel();
 }
+
+bool IssueListModel::setIssuePending(qlonglong id, bool pending)
+{
+    for (int row = 0; row < m_issues.size(); ++row) {
+        if (m_issues.at(row).id == id) {
+            if (m_issues.at(row).pending == pending) {
+                return true;
+            }
+            m_issues[row].pending = pending;
+            const QModelIndex index = createIndex(row, 0);
+            Q_EMIT dataChanged(index, index, {PendingRole});
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IssueListModel::isIssuePending(qlonglong id) const
+{
+    for (const Issue &issue : m_issues) {
+        if (issue.id == id) {
+            return issue.pending;
+        }
+    }
+    return false;
+}
+
+bool IssueListModel::removeIssue(qlonglong id)
+{
+    for (int row = 0; row < m_issues.size(); ++row) {
+        if (m_issues.at(row).id == id) {
+            beginRemoveRows(QModelIndex(), row, row);
+            m_issues.removeAt(row);
+            endRemoveRows();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IssueListModel::applyIssueState(qlonglong id, const QString &state)
+{
+    if (state != QStringLiteral("open") && state != QStringLiteral("closed")) {
+        return false;
+    }
+    for (int row = 0; row < m_issues.size(); ++row) {
+        if (m_issues.at(row).id == id) {
+            m_issues[row].state = state;
+            m_issues[row].pending = false;
+            const QModelIndex index = createIndex(row, 0);
+            Q_EMIT dataChanged(index, index, {StateRole, PendingRole});
+            return true;
+        }
+    }
+    return false;
+}

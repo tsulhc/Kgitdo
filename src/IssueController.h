@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 
 #include "AuthSession.h"
@@ -33,6 +34,8 @@ class IssueController : public QObject
     Q_PROPERTY(int loadedCount READ loadedCount NOTIFY countsChanged)
     Q_PROPERTY(int visibleCount READ visibleCount NOTIFY countsChanged)
     Q_PROPERTY(QDateTime lastRefresh READ lastRefresh NOTIFY lastRefreshChanged)
+    Q_PROPERTY(bool canUndoClose READ canUndoClose NOTIFY undoChanged)
+    Q_PROPERTY(QString undoMessage READ undoMessage NOTIFY undoChanged)
 
 public:
     // Mirror IssueQuery enums for QML (int-compatible values).
@@ -67,12 +70,20 @@ public:
     int loadedCount() const { return m_loaded.size(); }
     int visibleCount() const { return m_model ? m_model->rowCount() : 0; }
     QDateTime lastRefresh() const { return m_lastRefresh; }
+    bool canUndoClose() const { return m_undo.id != 0; }
+    // Test-only: QML and production code use canUndoClose().
+    bool undoInFlightForTesting() const { return m_undoInFlight; }
+    QString undoMessage() const { return m_undoMessage; }
 
     void setView(int view);
     void setIssueState(int state);
     void setRepoFilter(const QString &repoFullName);
 
     Q_INVOKABLE void reload();
+    Q_INVOKABLE void closeIssue(const QString &issueId);
+    Q_INVOKABLE void reopenIssue(const QString &issueId);
+    Q_INVOKABLE void undoLastClose();
+    Q_INVOKABLE void dismissUndo();
 
 Q_SIGNALS:
     void viewChanged();
@@ -85,15 +96,21 @@ Q_SIGNALS:
     void outcomeChanged();
     void countsChanged();
     void lastRefreshChanged();
+    void undoChanged();
 
 private:
     void setLoading(bool loading);
     void applyRepoFilter();
     void clearOutcomeFlags();
     // Drops every account-derived state (list, repos, filter, messages,
-    // outcome flags, refresh stamp) and invalidates in-flight fetches.
-    // Shared by sign-out and new-identity sign-in cleanup.
+    // outcome flags, refresh stamp, undo snapshot) and invalidates
+    // in-flight fetches. Shared by sign-out and new-identity sign-in cleanup.
     void clearAllState();
+    // One-shot close/reopen: resolves coordinates from the loaded list,
+    // guards double activation via the pending flag, then delegates.
+    void sendStateChange(qlonglong id, bool closed, bool isUndo);
+    void clearUndo();
+    int loadedRow(qlonglong id) const;
 
     AuthSession *m_auth = nullptr;
     GitHubClient *m_client = nullptr;
@@ -106,7 +123,14 @@ private:
     QList<Issue> m_loaded;
 
     bool m_loading = false;
-    int m_generation = 0; // fetch epoch: logout bumps it so stale callbacks die
+    int m_generation = 0; // fetch epoch: reload/logout bumps it so stale fetch callbacks die
+    // Account epoch: logout and new-identity sign-in bump it so in-flight
+    // mutation callbacks drop their results instead of applying one
+    // account's confirmed change to another account's (now empty) state.
+    // A plain reload does NOT bump this: a successful mutation always
+    // reflects server truth, so it still converges locally even when a
+    // reload raced it (and provides the close-undo snapshot).
+    int m_accountGeneration = 0;
     QString m_errorMessage;
     QString m_warningMessage;
     bool m_incomplete = false;
@@ -120,4 +144,28 @@ private:
     // sign-out (e.g. refresh failure followed by a fresh device flow) still
     // drops the prior account's issues and reloads for the new identity.
     QString m_lastLogin;
+    // One-shot undo snapshot for the last successful close: the issue is
+    // re-added locally when the undo reopen succeeds. Cleared on logout,
+    // new-identity sign-in, dismiss, successful undo, or a new close.
+    struct UndoClose {
+        qlonglong id = 0;
+        QString owner;
+        QString repo;
+        int number = 0;
+        // Scope provenance of the closed issue: the undo reopen must
+        // converge against the CURRENT scope view, and only the snapshot
+        // knows which views the issue belongs to.
+        bool isAssignedToMe = false;
+        bool isAuthoredByMe = false;
+    };
+    UndoClose m_undo;
+    QString m_undoMessage;
+    bool m_undoInFlight = false; // undo PATCH outstanding: second undo is a no-op
+    // Outstanding mutation PATCH per issue id. This is the authoritative
+    // double-send guard: the model's pending flags are visual state that a
+    // reload rebuilds, so they cannot be trusted to still be set when the
+    // callback lands. Entries are added when the PATCH is sent and removed
+    // only when its callback completes or the account changes (clearAllState
+    // empties the set). Never cleared by a plain reload.
+    QSet<qlonglong> m_mutationGuard;
 };

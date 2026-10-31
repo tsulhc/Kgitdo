@@ -70,7 +70,8 @@ GitHubClient::MappedResponse GitHubClient::mapSearchResponse(const IssueHttpResu
         }
         out.errorMessage = message.isEmpty()
             ? QStringLiteral("GitHub refused the request. Check the app installation and retry.")
-            : QStringLiteral("GitHub refused the request: %1").arg(message);
+            : QStringLiteral("GitHub refused the request: %1 Check the app installation and retry.")
+                  .arg(message);
         return out;
     }
     if (status == 404) {
@@ -92,7 +93,11 @@ GitHubClient::MappedResponse GitHubClient::mapSearchResponse(const IssueHttpResu
         return out;
     }
     IssueQuery::SearchPage page;
-    if (!IssueQuery::parseSearchPage(http.body, IssueQuery::QueryKind::Assigned, &page)) {
+    // Parse neutrally: every fetched issue would otherwise arrive flagged
+    // assigned (the old hardcoded Assigned kind), defeating the
+    // authored/assigned distinction and the scope-convergence gate.
+    // Provenance is applied per query by flagProvenance below.
+    if (!IssueQuery::parseSearchPage(http.body, IssueQuery::QueryKind::Unknown, &page)) {
         out.errorMessage = page.errorString;
         return out;
     }
@@ -105,6 +110,84 @@ GitHubClient::GitHubClient(IIssueApi *api, QObject *parent)
     : QObject(parent)
     , m_api(api)
 {
+}
+
+GitHubClient::UpdateResult GitHubClient::mapUpdateResponse(const IssueHttpResult &http, bool expectClosed)
+{
+    UpdateResult out;
+    if (!http.transportError.isEmpty() || http.httpStatus == 0) {
+        out.errorMessage = http.transportError.isEmpty()
+            ? QStringLiteral("Network request failed. Check the connection and retry.")
+            : http.transportError;
+        return out;
+    }
+    const int status = http.httpStatus;
+    if (status == 401) {
+        out.unauthorized = true;
+        out.errorMessage = QStringLiteral("Session expired or revoked. Please sign in again.");
+        return out;
+    }
+    if (status == 429) {
+        out.rateLimited = true;
+        out.retryAfterSecs = qMax(retryAfterSecs(http.headers), rateLimitResetInSecs(http.headers));
+        out.errorMessage = QStringLiteral("GitHub rate limit reached. Wait a little and retry.");
+        return out;
+    }
+    if (status == 403) {
+        const bool exhausted = http.headers.value(QStringLiteral("x-ratelimit-remaining"), QStringLiteral("1"))
+            == QStringLiteral("0");
+        const QString message = apiMessage(http.body);
+        if (exhausted || message.contains(QStringLiteral("rate limit"), Qt::CaseInsensitive)) {
+            out.rateLimited = true;
+            out.retryAfterSecs = qMax(retryAfterSecs(http.headers), rateLimitResetInSecs(http.headers));
+            out.errorMessage = QStringLiteral("GitHub rate limit reached. Wait a little and retry.");
+            return out;
+        }
+        out.forbidden = true;
+        // Always mention the installation: integration 403s ("Resource not
+        // accessible by integration", "Must have push access") mean the app
+        // lacks permission on this repository even when GitHub explains why.
+        out.errorMessage = message.isEmpty()
+            ? QStringLiteral(
+                  "GitHub refused the change: check the app installation on this repository and your access.")
+            : QStringLiteral("GitHub refused the change: %1 Check the app installation on this repository "
+                             "and your access.")
+                  .arg(message);
+        return out;
+    }
+    if (status == 404) {
+        out.errorMessage = QStringLiteral(
+            "GitHub did not find the issue: it may have been deleted or the app is not installed on its repository.");
+        return out;
+    }
+    if (status == 422) {
+        const QString message = apiMessage(http.body);
+        out.errorMessage = message.isEmpty()
+            ? QStringLiteral("GitHub rejected the change. Please reload and retry.")
+            : QStringLiteral("GitHub rejected the change: %1").arg(message);
+        return out;
+    }
+    if (status < 200 || status >= 300) {
+        const QString message = apiMessage(http.body);
+        out.errorMessage = message.isEmpty()
+            ? QStringLiteral("GitHub request failed. Please retry.")
+            : QStringLiteral("GitHub request failed: %1").arg(message);
+        return out;
+    }
+    // Success is only claimed when the server echoes the requested state.
+    QString state;
+    if (!IssueQuery::parseUpdatedIssueState(http.body, &state)) {
+        out.errorMessage = QStringLiteral("GitHub answered unexpectedly. Reload to see the current state.");
+        return out;
+    }
+    const bool isClosed = (state == QStringLiteral("closed"));
+    if (isClosed != expectClosed) {
+        out.errorMessage = QStringLiteral("GitHub did not apply the change. Reload to see the current state.");
+        return out;
+    }
+    out.ok = true;
+    out.state = state;
+    return out;
 }
 
 // One fetch = sequential queries, each with sequential Link pagination.
@@ -327,4 +410,24 @@ void GitHubClient::fetchIssues(IssueQuery::View view, IssueQuery::State state, c
     }
     auto *job = new IssueFetchJob(m_api, queries, kinds, token, std::move(callback), this);
     job->start();
+}
+
+void GitHubClient::updateIssueState(const QString &owner, const QString &repo, int number, bool closed,
+                                    const QString &token, UpdateCallback callback)
+{
+    if (owner.isEmpty() || repo.isEmpty() || number <= 0 || token.isEmpty()) {
+        UpdateResult result;
+        result.errorMessage = QStringLiteral("Sign in to change issues.");
+        callback(result);
+        return;
+    }
+    IssueUpdateRequest request;
+    request.owner = owner;
+    request.repo = repo;
+    request.number = number;
+    request.closed = closed;
+    m_api->updateIssueState(request, token,
+                            [closed, callback = std::move(callback)](const IssueHttpResult &http) {
+                                callback(GitHubClient::mapUpdateResponse(http, closed));
+                            });
 }

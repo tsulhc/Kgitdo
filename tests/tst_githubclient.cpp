@@ -65,6 +65,9 @@ public:
     QList<IssueHttpResult> queue;
     QList<QUrl> requestedUrls;
     QList<QString> requestedTokens;
+    QList<IssueHttpResult> updateQueue;
+    QList<IssueUpdateRequest> updateRequests;
+    QList<QString> updateTokens;
 
     void searchIssues(const QUrl &url, const QString &accessToken,
                       std::function<void(IssueHttpResult)> callback) override
@@ -79,6 +82,20 @@ public:
         }
         callback(result);
     }
+
+    void updateIssueState(const IssueUpdateRequest &request, const QString &accessToken,
+                          std::function<void(IssueHttpResult)> callback) override
+    {
+        updateRequests.append(request);
+        updateTokens.append(accessToken);
+        IssueHttpResult result;
+        if (!updateQueue.isEmpty()) {
+            result = updateQueue.takeFirst();
+        } else {
+            result.transportError = QStringLiteral("no queued update response");
+        }
+        callback(result);
+    }
 };
 
 class GitHubClientTest : public QObject
@@ -87,6 +104,7 @@ class GitHubClientTest : public QObject
 private Q_SLOTS:
     void allViewMergesAndDedups();
     void assignedViewFlagsUniformly();
+    void createdViewFlagsAuthoredOnly();
     void immediateErrorWithoutRequests();
     void firstPageFailureIsError();
     void midPaginationFailureTruncates();
@@ -102,6 +120,14 @@ private Q_SLOTS:
     void retryAfterPrefersHeader();
     void apiRequestPinsSameOriginRedirects();
     void crossOriginRedirectIsNotFollowed();
+    void updateCloseSuccess();
+    void updateReopenSuccess();
+    void updateEchoMismatchFails();
+    void updateUnauthorized();
+    void updateForbiddenByQuotaIsRateLimit();
+    void updateForbiddenPlain();
+    void updateValidationAndTransportErrors();
+    void updateGuardsWithoutRequest();
 };
 
 void GitHubClientTest::allViewMergesAndDedups()
@@ -149,6 +175,27 @@ void GitHubClientTest::assignedViewFlagsUniformly()
     QVERIFY(api.requestedUrls.at(0).query().contains(QStringLiteral("assignee")));
     QVERIFY(api.requestedUrls.at(0).query().contains(QStringLiteral("is%3Aclosed"))
         || api.requestedUrls.at(0).query().contains(QStringLiteral("is:closed")));
+}
+
+void GitHubClientTest::createdViewFlagsAuthoredOnly()
+{
+    // Regression: the fetcher once parsed every page as Assigned, so an
+    // authored-only issue arrived misflagged as assigned and defeated the
+    // scope-convergence gate. Neutral parse + per-query provenance must
+    // leave it authored-only.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(5, 1, "Only")})));
+    GitHubClient client(&api);
+    client.fetchIssues(IssueQuery::View::Created, IssueQuery::State::Open, QStringLiteral("tok"),
+                       QStringLiteral("octocat"),
+                       [&](const GitHubClient::FetchResult &result) {
+                           QVERIFY(result.ok);
+                           QCOMPARE(result.issues.size(), 1);
+                           QVERIFY(result.issues.at(0).isAuthoredByMe);
+                           QVERIFY(!result.issues.at(0).isAssignedToMe);
+                       });
+    QCOMPARE(api.requestedUrls.size(), 1);
+    QVERIFY(api.requestedUrls.at(0).query().contains(QStringLiteral("author")));
 }
 
 void GitHubClientTest::immediateErrorWithoutRequests()
@@ -433,6 +480,156 @@ void GitHubClientTest::crossOriginRedirectIsNotFollowed()
     QVERIFY(firstHop.contains("Bearer SECRET"));
     QCOMPARE(got.httpStatus, 302);
     QCOMPARE(trapHits, 0);
+}
+
+void GitHubClientTest::updateCloseSuccess()
+{
+    FakeIssueApi api;
+    api.updateQueue.append(httpStatus(200, QByteArray("{\"state\":\"closed\"}")));
+    GitHubClient client(&api);
+    bool called = false;
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 7, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(result.ok);
+                                QCOMPARE(result.state, QStringLiteral("closed"));
+                                QVERIFY(result.errorMessage.isEmpty());
+                            });
+    QVERIFY(called);
+    QCOMPARE(api.updateRequests.size(), 1);
+    QCOMPARE(api.updateRequests.at(0).owner, QStringLiteral("o"));
+    QCOMPARE(api.updateRequests.at(0).repo, QStringLiteral("r"));
+    QCOMPARE(api.updateRequests.at(0).number, 7);
+    QVERIFY(api.updateRequests.at(0).closed);
+    QCOMPARE(api.updateTokens, QList<QString>({QStringLiteral("tok")}));
+}
+
+void GitHubClientTest::updateReopenSuccess()
+{
+    FakeIssueApi api;
+    api.updateQueue.append(httpStatus(200, QByteArray("{\"state\":\"open\"}")));
+    GitHubClient client(&api);
+    bool called = false;
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 9, false, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(result.ok);
+                                QCOMPARE(result.state, QStringLiteral("open"));
+                            });
+    QVERIFY(called);
+    QVERIFY(!api.updateRequests.at(0).closed);
+}
+
+void GitHubClientTest::updateEchoMismatchFails()
+{
+    // Fail-closed: a 2xx without the requested echoed state is a failure,
+    // not a success.
+    FakeIssueApi api;
+    api.updateQueue.append(httpStatus(200, QByteArray("{\"state\":\"open\"}")));
+    GitHubClient client(&api);
+    bool called = false;
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 7, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(!result.ok);
+                                QVERIFY(!result.errorMessage.isEmpty());
+                            });
+    QVERIFY(called);
+}
+
+void GitHubClientTest::updateUnauthorized()
+{
+    FakeIssueApi api;
+    api.updateQueue.append(httpStatus(401, QByteArray("{\"message\":\"Bad credentials\"}")));
+    GitHubClient client(&api);
+    bool called = false;
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 7, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(!result.ok);
+                                QVERIFY(result.unauthorized);
+                            });
+    QVERIFY(called);
+}
+
+void GitHubClientTest::updateForbiddenByQuotaIsRateLimit()
+{
+    FakeIssueApi api;
+    IssueHttpResult limited = httpStatus(403, QByteArray("{\"message\":\"API rate limit exceeded\"}"));
+    limited.headers.insert(QStringLiteral("x-ratelimit-remaining"), QStringLiteral("0"));
+    api.updateQueue.append(limited);
+    GitHubClient client(&api);
+    bool called = false;
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 7, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(!result.ok);
+                                QVERIFY(result.rateLimited);
+                                QVERIFY(!result.forbidden);
+                            });
+    QVERIFY(called);
+}
+
+void GitHubClientTest::updateForbiddenPlain()
+{
+    FakeIssueApi api;
+    api.updateQueue.append(httpStatus(403, QByteArray("{\"message\":\"Must have push access\"}")));
+    GitHubClient client(&api);
+    bool called = false;
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 7, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(!result.ok);
+                                QVERIFY(result.forbidden);
+                                QVERIFY(!result.rateLimited);
+                                QVERIFY(result.errorMessage.contains(QStringLiteral("installation"),
+                                                                      Qt::CaseInsensitive));
+                            });
+    QVERIFY(called);
+}
+
+void GitHubClientTest::updateValidationAndTransportErrors()
+{
+    FakeIssueApi api;
+    api.updateQueue.append(httpStatus(404, QByteArray("{\"message\":\"Not Found\"}")));
+    IssueHttpResult failed;
+    failed.transportError = QStringLiteral("boom");
+    api.updateQueue.append(failed);
+    GitHubClient client(&api);
+    bool called = false;
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 7, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(!result.ok);
+                                QVERIFY(!result.errorMessage.isEmpty());
+                            });
+    QVERIFY(called);
+    called = false;
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 7, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(!result.ok);
+                            });
+    QVERIFY(called);
+}
+
+void GitHubClientTest::updateGuardsWithoutRequest()
+{
+    FakeIssueApi api;
+    GitHubClient client(&api);
+    bool called = false;
+    client.updateIssueState(QString(), QStringLiteral("r"), 7, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(!result.ok);
+                            });
+    QVERIFY(called);
+    client.updateIssueState(QStringLiteral("o"), QStringLiteral("r"), 0, true, QStringLiteral("tok"),
+                            [&](const GitHubClient::UpdateResult &result) {
+                                called = true;
+                                QVERIFY(!result.ok);
+                            });
+    QVERIFY(api.updateRequests.isEmpty());
 }
 
 QTEST_MAIN(GitHubClientTest)

@@ -1,6 +1,7 @@
 #include "IssueController.h"
 
 #include <QSet>
+#include <algorithm>
 
 IssueController::IssueController(AuthSession *authSession, GitHubClient *client, QObject *parent)
     : QObject(parent)
@@ -147,6 +148,14 @@ void IssueController::reload()
                               // explicit empty choice rather than silently
                               // dropping it: the counts tell the story.
                               applyRepoFilter();
+                              // The model was just rebuilt, losing its visual
+                              // pending flags, but outstanding mutations are
+                              // still live (plain reloads never fence them):
+                              // re-mark their rows so a second activation
+                              // stays visibly busy until the PATCH lands.
+                              for (const qlonglong guarded : m_mutationGuard) {
+                                  m_model->setIssuePending(guarded, true);
+                              }
                               m_lastRefresh = QDateTime::currentDateTimeUtc();
                               Q_EMIT lastRefreshChanged();
                               if (!result.errorMessage.isEmpty()) {
@@ -199,6 +208,234 @@ void IssueController::clearOutcomeFlags()
     Q_EMIT outcomeChanged();
 }
 
+void IssueController::closeIssue(const QString &issueId)
+{
+    bool ok = false;
+    const qlonglong id = issueId.toLongLong(&ok);
+    if (ok) {
+        sendStateChange(id, true, false);
+    }
+}
+
+void IssueController::reopenIssue(const QString &issueId)
+{
+    bool ok = false;
+    const qlonglong id = issueId.toLongLong(&ok);
+    if (ok) {
+        sendStateChange(id, false, false);
+    }
+}
+
+void IssueController::undoLastClose()
+{
+    if (m_undo.id == 0) {
+        return;
+    }
+    // Keep the snapshot until the reopen succeeds: a failed undo must stay
+    // retryable via the banner rather than losing the issue coordinates.
+    sendStateChange(m_undo.id, false, true);
+}
+
+void IssueController::dismissUndo()
+{
+    clearUndo();
+}
+
+void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
+{
+    if (!m_client || !m_auth || !m_auth->isAuthenticated()
+        || m_auth->currentAccessToken().isEmpty()) {
+        return;
+    }
+    // Authoritative double-send guard: the model's pending flag is visual
+    // state that fetches rebuild, so only this set can prove no PATCH is
+    // outstanding for the id. It is checked BEFORE any state mutation (the
+    // undo-in-flight flag below, the model pending flag further down): a
+    // rejected overlapping request must leave no flag behind. Entries are
+    // added just before dispatch and released when the PATCH callback of
+    // the same account completes — never by a plain reload; clearAllState
+    // wipes them on logout/account change.
+    if (m_mutationGuard.contains(id)) {
+        return; // PATCH already outstanding for this issue.
+    }
+    if (isUndo && (m_undo.id == 0 || m_undo.id != id || m_undoInFlight)) {
+        return; // No snapshot, stale target, or undo already in flight.
+    }
+    // Copy before any list mutation: references into m_loaded dangle after
+    // removeAt/append/sort.
+    Issue target;
+    QString targetNumber;
+    if (isUndo) {
+        // Undo reopens an issue already dropped from the list: the row
+        // guards below cannot apply, so rebuild from the snapshot.
+        target.id = m_undo.id;
+        target.owner = m_undo.owner;
+        target.repo = m_undo.repo;
+        target.number = m_undo.number;
+        target.state = QStringLiteral("closed");
+        // Restore scope provenance: without it an undo landing in the
+        // Assigned/Created view would always look out of scope.
+        target.isAssignedToMe = m_undo.isAssignedToMe;
+        target.isAuthoredByMe = m_undo.isAuthoredByMe;
+        targetNumber = target.qualifiedNumber();
+        m_undoInFlight = true;
+    } else {
+        const int row = loadedRow(id);
+        if (row < 0) {
+            return;
+        }
+        const Issue &issue = m_loaded.at(row);
+        // Only forward transitions make sense: closing an open issue or
+        // reopening a closed one. Anything else is a stale UI event.
+        if ((closed && issue.state != QLatin1String("open"))
+            || (!closed && issue.state != QLatin1String("closed"))) {
+            return;
+        }
+        if (m_model->isIssuePending(issue.id)) {
+            return; // Already in flight: double-activation guard.
+        }
+        if (!m_model->setIssuePending(issue.id, true)) {
+            return; // Absent from the visible slice: stale UI event.
+        }
+        target = issue;
+        targetNumber = target.qualifiedNumber();
+    }
+    // The guard was checked before any state mutation above; the entry is
+    // added only now that every row guard passed and dispatch is certain.
+    m_mutationGuard.insert(id);
+    const QString token = m_auth->currentAccessToken();
+    const QString login = m_auth->userLogin();
+    const int accountGeneration = m_accountGeneration;
+    m_client->updateIssueState(target.owner, target.repo, target.number, closed, token,
+        [this, id, closed, isUndo, login, accountGeneration, target, targetNumber](
+            const GitHubClient::UpdateResult &result) {
+            if (accountGeneration != m_accountGeneration) {
+                // Superseded by logout or a new-identity sign-in: clearAllState
+                // already wiped this callback's guard entry, and the new
+                // account may have started its own mutation for the same
+                // issue id — so remove nothing here, or the stale callback
+                // would release the new account's guard and allow a
+                // duplicate PATCH. The same holds for the undo flag: the new
+                // account owns it now, so a fenced callback must touch no
+                // current-account state at all.
+                return;
+            }
+            m_model->setIssuePending(id, false);
+            if (!result.ok) {
+                // Keep the list visible: mutation failures are warnings,
+                // not load errors, and the row stays with its old state.
+                m_mutationGuard.remove(id);
+                if (isUndo) {
+                    m_undoInFlight = false;
+                }
+                m_warningMessage = result.errorMessage.isEmpty()
+                    ? QStringLiteral("Could not update the issue. Please retry.")
+                    : result.errorMessage;
+                Q_EMIT warningChanged();
+                return;
+            }
+            if (m_auth && m_auth->userLogin() != login) {
+                // Identity changed mid-mutation: drop the result rather
+                // than mixing accounts. The new identity's reload (or the
+                // next refresh) reconverges with the server. The guard entry
+                // was already wiped by clearAllState and may have been
+                // re-taken by the new account, so remove nothing here.
+                return;
+            }
+            // Success: the server echoed the requested state.
+            m_mutationGuard.remove(id);
+            if (closed && !isUndo) {
+                // Snapshot the coordinates for one-shot undo.
+                m_undo.id = id;
+                m_undo.owner = target.owner;
+                m_undo.repo = target.repo;
+                m_undo.number = target.number;
+                m_undo.isAssignedToMe = target.isAssignedToMe;
+                m_undo.isAuthoredByMe = target.isAuthoredByMe;
+                m_undoMessage = QStringLiteral("Closed %1 — undo?").arg(targetNumber);
+                Q_EMIT undoChanged();
+            } else if (!closed && isUndo) {
+                m_undoInFlight = false;
+                // Retire the snapshot only if it still belongs to this
+                // undo: a newer close may have replaced it while this
+                // reopen was in flight, and that offer must survive.
+                if (m_undo.id == id) {
+                    clearUndo();
+                }
+            } else {
+                if (isUndo) {
+                    m_undoInFlight = false;
+                }
+                clearUndo();
+            }
+            // Converge the row against the CURRENT filter, which may have
+            // changed while the PATCH was in flight. When the confirmed
+            // state belongs in this view, ensure the row is listed with
+            // that state (append, or patch a raced fetch's row while
+            // keeping its fresher server fields); when it left this view,
+            // drop the row if still listed. Either way no extra fetch is
+            // needed and no wrong-state row can appear.
+            const bool confirmedInView = (closed && m_issueState == StateClosed)
+                || (!closed && m_issueState == StateOpen);
+            // Scope view matters too: the state filter alone cannot prove
+            // membership in Assigned/Created. A close started in All may
+            // succeed after the user switched to Assigned, and an
+            // unassigned issue must not be appended to that list.
+            const bool inScopeView = (m_view == ViewAll)
+                || (m_view == ViewAssigned && target.isAssignedToMe)
+                || (m_view == ViewCreated && target.isAuthoredByMe);
+            if (confirmedInView && inScopeView) {
+                Issue converged = target;
+                converged.state = closed ? QStringLiteral("closed") : QStringLiteral("open");
+                // The row must be interactive: target may predate the latest
+                // fetch cycle, so never carry a stale pending flag into the
+                // list (the guard, not the flag, proves no PATCH is out).
+                converged.pending = false;
+                const int existing = loadedRow(converged.id);
+                if (existing < 0) {
+                    m_loaded.append(converged);
+                } else {
+                    m_loaded[existing].state = converged.state;
+                }
+                std::sort(m_loaded.begin(), m_loaded.end(), [](const Issue &a, const Issue &b) {
+                    if (a.updatedAt.isValid() != b.updatedAt.isValid()) {
+                        return a.updatedAt.isValid();
+                    }
+                    return a.updatedAt > b.updatedAt;
+                });
+                applyRepoFilter();
+            } else {
+                const int current = loadedRow(id);
+                if (current >= 0) {
+                    m_loaded.removeAt(current);
+                    m_model->removeIssue(id);
+                    Q_EMIT countsChanged();
+                }
+            }
+        });
+}
+
+void IssueController::clearUndo()
+{
+    m_undoInFlight = false;
+    if (m_undo.id == 0 && m_undoMessage.isEmpty()) {
+        return;
+    }
+    m_undo = UndoClose();
+    m_undoMessage.clear();
+    Q_EMIT undoChanged();
+}
+
+int IssueController::loadedRow(qlonglong id) const
+{
+    for (int i = 0; i < m_loaded.size(); ++i) {
+        if (m_loaded.at(i).id == id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void IssueController::clearAllState()
 {
     // Invalidate any in-flight fetch first: its callback must not
@@ -207,6 +444,8 @@ void IssueController::clearAllState()
     // is ignored, and release the loading guard so a later sign-in can
     // reload immediately.
     ++m_generation;
+    ++m_accountGeneration; // mutations in flight belong to the old account
+    m_mutationGuard.clear(); // outstanding PATCHes are fenced: their guard dies here
     setLoading(false);
     m_loaded.clear();
     m_model->setIssues({});
@@ -225,5 +464,6 @@ void IssueController::clearAllState()
     clearOutcomeFlags();
     m_lastRefresh = QDateTime();
     Q_EMIT lastRefreshChanged();
+    clearUndo();
     Q_EMIT countsChanged();
 }

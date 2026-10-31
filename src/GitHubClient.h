@@ -50,12 +50,33 @@ public:
     };
     static MappedResponse mapSearchResponse(const IssueHttpResult &http);
 
+    struct UpdateResult {
+        bool ok = false; // server confirmed the requested state
+        QString state; // "open"/"closed" as returned by GitHub
+        bool unauthorized = false; // HTTP 401: token revoked/expired
+        bool forbidden = false; // HTTP 403 non-quota: installation/access
+        bool rateLimited = false;
+        int retryAfterSecs = 0;
+        QString errorMessage; // no secrets
+    };
+    // Maps one raw HTTP PATCH response. Pure except for the clock;
+    // covered by unit tests with synthetic responses.
+    static UpdateResult mapUpdateResponse(const IssueHttpResult &http, bool expectClosed);
+
     explicit GitHubClient(IIssueApi *api, QObject *parent = nullptr);
 
     // view/state select the queries; token is the W1 Bearer token, login
     // the signed-in user. The callback always fires exactly once.
     void fetchIssues(IssueQuery::View view, IssueQuery::State state, const QString &token,
                      const QString &login, FetchCallback callback);
+
+    using UpdateCallback = std::function<void(UpdateResult)>;
+
+    // Close (closed=true) or reopen one issue. Only the state changes;
+    // the request never touches title, body, assignees, or labels. The
+    // callback always fires exactly once.
+    void updateIssueState(const QString &owner, const QString &repo, int number, bool closed,
+                          const QString &token, UpdateCallback callback);
 
 private:
     IIssueApi *m_api = nullptr;

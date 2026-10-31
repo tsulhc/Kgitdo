@@ -85,6 +85,49 @@ QUrl buildSearchUrl(const QString &queryString, int page)
     return url;
 }
 
+QUrl buildIssueUpdateUrl(const QString &owner, const QString &repo, int number)
+{
+    if (owner.isEmpty() || repo.isEmpty() || number <= 0) {
+        return QUrl();
+    }
+    QUrl url(QStringLiteral("https://api.github.com"));
+    // Single segments: slashes in names would escape the path, so reject
+    // them rather than building a URL that targets something else.
+    if (owner.contains(QLatin1Char('/')) || repo.contains(QLatin1Char('/'))) {
+        return QUrl();
+    }
+    url.setPath(QStringLiteral("/repos/") + owner + QLatin1Char('/') + repo + QStringLiteral("/issues/")
+                + QString::number(number));
+    return url;
+}
+
+QByteArray buildIssueUpdateBody(bool closed)
+{
+    if (closed) {
+        return QByteArray("{\"state\":\"closed\",\"state_reason\":\"completed\"}");
+    }
+    return QByteArray("{\"state\":\"open\"}");
+}
+
+bool parseUpdatedIssueState(const QByteArray &body, QString *stateOut)
+{
+    if (!stateOut) {
+        return false;
+    }
+    stateOut->clear();
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+    const QString state = doc.object().value(QStringLiteral("state")).toString();
+    if (state != QStringLiteral("open") && state != QStringLiteral("closed")) {
+        return false;
+    }
+    *stateOut = state;
+    return true;
+}
+
 bool parseSearchPage(const QByteArray &body, QueryKind kind, SearchPage *out)
 {
     if (!out) {
@@ -149,9 +192,11 @@ bool parseSearchPage(const QByteArray &body, QueryKind kind, SearchPage *out)
         }
         if (kind == QueryKind::Assigned) {
             issue.isAssignedToMe = true;
-        } else {
+        } else if (kind == QueryKind::Authored) {
             issue.isAuthoredByMe = true;
         }
+        // QueryKind::Unknown sets neither flag: provenance is decided by
+        // the caller (see GitHubClient flagProvenance), never by the parse.
         out->issues.append(issue);
     }
     out->ok = true;

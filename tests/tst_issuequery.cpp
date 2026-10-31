@@ -12,6 +12,7 @@ private Q_SLOTS:
     void buildEmptyLogin();
     void buildSearchUrl();
     void parseValidPageAuthored();
+    void parseUnknownKindSetsNeitherFlag();
     void parseSkipsPullRequestsAndIdless();
     void parseMalformed();
     void parseMissingItems();
@@ -24,6 +25,11 @@ private Q_SLOTS:
     void nextLinkRejectsForeignHttpsHost();
     void nextLinkAllowsApiOriginOnly();
     void cappedResults();
+    void updateUrlValid();
+    void updateUrlRejectsBadCoords();
+    void updateBodyCloseHasReason();
+    void updateBodyReopenHasNoReason();
+    void parseUpdatedStateStrict();
 };
 
 void IssueQueryTest::buildAllOpen()
@@ -111,6 +117,20 @@ void IssueQueryTest::parseValidPageAuthored()
     QVERIFY(first.updatedAt.isValid());
     QVERIFY(first.isAuthoredByMe);
     QVERIFY(!first.isAssignedToMe);
+}
+
+void IssueQueryTest::parseUnknownKindSetsNeitherFlag()
+{
+    // The fetcher parses neutrally; provenance is applied per query by the
+    // caller. Unknown must never imply assignment.
+    const QByteArray body = "{\"total_count\":1,\"incomplete_results\":false,\"items\":["
+        + itemJson(101, 7, "Fix bug", "o/r", false) + "]}";
+    IssueQuery::SearchPage page;
+    QVERIFY(IssueQuery::parseSearchPage(body, IssueQuery::QueryKind::Unknown, &page));
+    QVERIFY(page.ok);
+    QCOMPARE(page.issues.size(), 1);
+    QVERIFY(!page.issues.at(0).isAuthoredByMe);
+    QVERIFY(!page.issues.at(0).isAssignedToMe);
 }
 
 void IssueQueryTest::parseSkipsPullRequestsAndIdless()
@@ -235,6 +255,49 @@ void IssueQueryTest::cappedResults()
     QVERIFY(IssueQuery::isCappedResult(500, true, 100));
     QVERIFY(!IssueQuery::isCappedResult(500, false, 500));
     QVERIFY(!IssueQuery::isCappedResult(-1, false, 0));
+}
+
+void IssueQueryTest::updateUrlValid()
+{
+    const QUrl url = IssueQuery::buildIssueUpdateUrl(QStringLiteral("o"), QStringLiteral("r"), 7);
+    QVERIFY(url.isValid());
+    QCOMPARE(url.host(), QStringLiteral("api.github.com"));
+    QVERIFY(url.path().contains(QStringLiteral("/repos/o/r/issues/7")));
+}
+
+void IssueQueryTest::updateUrlRejectsBadCoords()
+{
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QString(), QStringLiteral("r"), 7).isValid());
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QStringLiteral("o"), QString(), 7).isValid());
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QStringLiteral("o"), QStringLiteral("r"), 0).isValid());
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QStringLiteral("o/x"), QStringLiteral("r"), 7).isValid());
+    QVERIFY(!IssueQuery::buildIssueUpdateUrl(QStringLiteral("o"), QStringLiteral("r/x"), 7).isValid());
+}
+
+void IssueQueryTest::updateBodyCloseHasReason()
+{
+    const QByteArray body = IssueQuery::buildIssueUpdateBody(true);
+    QVERIFY(body.contains("\"state\""));
+    QVERIFY(body.contains("\"closed\""));
+    QVERIFY(body.contains("\"completed\""));
+}
+
+void IssueQueryTest::updateBodyReopenHasNoReason()
+{
+    const QByteArray body = IssueQuery::buildIssueUpdateBody(false);
+    QVERIFY(body.contains("\"open\""));
+    QVERIFY(!body.contains("\"completed\""));
+}
+
+void IssueQueryTest::parseUpdatedStateStrict()
+{
+    QString state;
+    QVERIFY(IssueQuery::parseUpdatedIssueState(QByteArray("{\"state\":\"closed\"}"), &state));
+    QCOMPARE(state, QStringLiteral("closed"));
+    QVERIFY(IssueQuery::parseUpdatedIssueState(QByteArray("{\"state\":\"open\"}"), &state));
+    QCOMPARE(state, QStringLiteral("open"));
+    QVERIFY(!IssueQuery::parseUpdatedIssueState(QByteArray("{\"state\":\"bogus\"}"), &state));
+    QVERIFY(!IssueQuery::parseUpdatedIssueState(QByteArray("{broken"), &state));
 }
 
 QTEST_MAIN(IssueQueryTest)

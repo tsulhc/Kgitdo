@@ -38,6 +38,14 @@ public:
     QList<Issue> issues() const { return m_issues; }
     void setIssues(const QList<Issue> &issues);
 
+    // W4: flip one row's pending flag / confirmed state without a full
+    // model reset (preserves selection and focus). False when the id is
+    // not in the visible slice.
+    bool setIssuePending(qlonglong id, bool pending);
+    bool isIssuePending(qlonglong id) const;
+    bool applyIssueState(qlonglong id, const QString &state);
+    bool removeIssue(qlonglong id);
+
 private:
     QList<Issue> m_issues;
 };
