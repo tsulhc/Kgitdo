@@ -53,6 +53,8 @@ jobs:
           cmake --install build
           test -x /tmp/kgitdo-install/bin/kgitdo
           test -f /tmp/kgitdo-install/share/applications/org.kde.kgitdo.desktop
+          test -f /tmp/kgitdo-install/share/metainfo/org.kde.kgitdo.metainfo.xml
+          test -f /tmp/kgitdo-install/share/icons/hicolor/scalable/apps/org.kde.kgitdo.svg
 
       - name: Smoke launch (offscreen)
         run: |

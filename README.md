@@ -7,7 +7,7 @@
 The goal is simple: keep track of issues you created or were assigned to, across repositories, in a clean checklist that feels at home on KDE Plasma. No full Git client, no heavyweight project-management suite, and no second task database to maintain.
 
 > [!IMPORTANT]
-> **Project status: W5 robustness pass.** This README describes the intended product and its initial scope. The Kirigami shell builds and runs with GitHub App device-flow sign-in, KWallet session persistence, and an issue checklist (All/Assigned/Created views, Open/Closed state, repository filter) over issues assigned to you or created by you; the checkbox closes an open issue (or reopens a closed one) directly on GitHub, with a short undo window after closing. Rate-limit failures surface a suggested retry delay from the server headers.
+> **Project status: W6 release candidate.** This README describes the intended product and its initial scope. The Kirigami shell builds and runs with GitHub App device-flow sign-in, KWallet session persistence, and an issue checklist (All/Assigned/Created views, Open/Closed state, repository filter) over issues assigned to you or created by you; the checkbox closes an open issue (or reopens a closed one) directly on GitHub, with a short undo window after closing. Rate-limit failures surface a suggested retry delay from the server headers.
 
 ## Why Kgitdo?
 
@@ -68,6 +68,19 @@ These are the implemented stack for the W0 foundation (minimal Kirigami shell) p
 
 Kgitdo signs in with a **GitHub App** using the device authorization flow for public desktop clients. No client secret is distributed or stored.
 
+### Obtaining a client ID (one-time setup)
+
+Kgitdo needs the **public client ID** of a GitHub App registered by you (or your organization). Device flow uses only this public ID — never a client secret or private key.
+
+1. Open <https://github.com/settings/apps> and choose **New GitHub App**. Fill in a name and homepage URL.
+2. Under **Permissions**, grant the minimum the app needs: repository **Issues: Read and write** plus **Metadata: Read-only**. Do not add broader permissions.
+3. Enable **Device flow** in the app's settings (user authorization): Kgitdo signs in with the device authorization flow, which GitHub requires to be turned on — otherwise sign-in is rejected (`device_flow_disabled`).
+4. Create the app, then **install** it on your account (and on any organization repositories you want to track) from the app's **Install App** page. Organization installs may need an administrator's approval.
+5. Copy the **Client ID** shown on the app's settings page and export it as `KGITDO_GITHUB_CLIENT_ID` before starting Kgitdo (see step 1 below).
+6. If sign-in reports an unknown client ID, double-check the copied value. Never paste a client secret or private key anywhere near this app.
+
+Official reference: <https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app>
+
 1. Set the public client ID and run the app:
 
    ```bash
@@ -94,6 +107,15 @@ Partial results are always explicit: the UI warns when GitHub reports `incomplet
 The checklist checkbox mutates state on GitHub: ticking an open issue sends `PATCH /repos/{owner}/{repo}/issues/{number}` with `{"state": "closed", "state_reason": "completed"}`; unticking a closed one in the Closed view sends `{"state": "open"}`. Nothing else is touched — title, body, assignees, and labels are never sent. A change counts only when GitHub echoes the requested state, so an unexpected server reply is treated as a failure rather than a success.
 
 Guards and feedback: the row shows a spinner while its PATCH is in flight and a second click on the same issue sends nothing (the first request owns the outcome); stale callbacks after logout or account switch are discarded. A failed mutation is a warning banner, not an error screen — the list stays visible and the row returns to its prior state. Closing shows a short undo banner that restores the row by reopening the same issue on GitHub.
+
+## Known issues and limitations (0.1)
+
+- **Authorization scope:** the app sees only repositories where its GitHub App is installed and your account has access. If expected issues are missing, check **Manage GitHub App installations** (`https://github.com/settings/installations`); organization installs may need admin approval.
+- **Search limits:** GitHub search returns at most 1,000 results per query and may report `incomplete_results`. The app warns whenever the list may be partial instead of claiming completeness.
+- **Rate limits:** when GitHub throttles requests, the app shows the server-suggested wait and does not retry mutations on its own. Wait for the delay, then use **Refresh** or retry the checkbox.
+- **One account at a time:** signing in as a different user clears the previous account's list, filters, and undo state. Sign-out removes local credentials only; revoke the authorization itself on github.com.
+- **Locked or missing wallet:** if KWallet cannot be opened, the session stays in memory only and sign-out warns until saved credentials can actually be removed (a retry button is offered).
+- **No offline mode:** the list always reflects GitHub at load time; without a network connection it shows an error instead of stale data. There are no background refreshes, notifications, or widgets in 0.1.
 
 ## Non-goals
 
