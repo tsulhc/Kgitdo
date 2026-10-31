@@ -862,6 +862,15 @@ void IssueControllerTest::reloginDiscardsInFlightMutation()
     QCOMPARE(controller.loadedCount(), 1);
     controller.closeIssue(rowId(controller, 0)); // in flight, alice's token
     QCOMPARE(api.updateRequests.size(), 1);
+    // Alice's session degrades to Failed (keeps tokens and the list): the
+    // only state from which a fresh device flow may start.
+    IAuthNetwork::TokenResult refreshFail;
+    refreshFail.ok = false;
+    refreshFail.transportError = QStringLiteral("timeout");
+    network->refreshQueue.append(refreshFail);
+    auth->refreshSession();
+    QCOMPARE(auth->status(), AuthSession::Failed);
+    QCOMPARE(controller.loadedCount(), 1);
     // Bob's pages are queued before his login completes (controller
     // reloads for the new identity synchronously inside the handler).
     api.queue.append(httpOk(pageJson({itemJson(2, 3, "BobIssue", "o/b")})));

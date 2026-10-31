@@ -235,43 +235,69 @@ void IssueController::dismissUndo()
 
 void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
 {
-    const int row = loadedRow(id);
-    if (row < 0 || !m_client || !m_auth || !m_auth->isAuthenticated()
+    if (!m_client || !m_auth || !m_auth->isAuthenticated()
         || m_auth->currentAccessToken().isEmpty()) {
         return;
     }
-    const Issue &issue = m_loaded.at(row);
-    // Only forward transitions make sense: closing an open issue or
-    // reopening a closed one. Anything else is a stale UI event.
-    if ((closed && issue.state != QLatin1String("open"))
-        || (!closed && issue.state != QLatin1String("closed"))) {
-        return;
+    if (isUndo && (m_undo.id == 0 || m_undo.id != id || m_undoInFlight)) {
+        return; // No snapshot, stale target, or undo already in flight.
     }
-    if (m_model->isIssuePending(issue.id)) {
-        return; // Already in flight: double-activation guard.
-    }
-    if (!m_model->setIssuePending(issue.id, true)) {
-        return; // Absent from the visible slice: stale UI event.
+    // Copy before any list mutation: references into m_loaded dangle after
+    // removeAt/append/sort.
+    Issue target;
+    QString targetNumber;
+    if (isUndo) {
+        // Undo reopens an issue already dropped from the list: the row
+        // guards below cannot apply, so rebuild from the snapshot.
+        target.id = m_undo.id;
+        target.owner = m_undo.owner;
+        target.repo = m_undo.repo;
+        target.number = m_undo.number;
+        target.state = QStringLiteral("closed");
+        targetNumber = target.qualifiedNumber();
+        m_undoInFlight = true;
+    } else {
+        const int row = loadedRow(id);
+        if (row < 0) {
+            return;
+        }
+        const Issue &issue = m_loaded.at(row);
+        // Only forward transitions make sense: closing an open issue or
+        // reopening a closed one. Anything else is a stale UI event.
+        if ((closed && issue.state != QLatin1String("open"))
+            || (!closed && issue.state != QLatin1String("closed"))) {
+            return;
+        }
+        if (m_model->isIssuePending(issue.id)) {
+            return; // Already in flight: double-activation guard.
+        }
+        if (!m_model->setIssuePending(issue.id, true)) {
+            return; // Absent from the visible slice: stale UI event.
+        }
+        target = issue;
+        targetNumber = target.qualifiedNumber();
     }
     const QString token = m_auth->currentAccessToken();
     const QString login = m_auth->userLogin();
     const int generation = m_generation;
-    // Copy before any list mutation: references into m_loaded dangle after
-    // removeAt/append/sort.
-    const Issue target = issue;
-    const QString targetNumber = target.qualifiedNumber();
     m_client->updateIssueState(target.owner, target.repo, target.number, closed, token,
         [this, id, closed, isUndo, login, generation, target, targetNumber](
             const GitHubClient::UpdateResult &result) {
             if (generation != m_generation) {
                 // Superseded by logout, new identity, or a reload: the model
                 // was already reset, so touch nothing.
+                if (isUndo) {
+                    m_undoInFlight = false;
+                }
                 return;
             }
             m_model->setIssuePending(id, false);
             if (!result.ok) {
                 // Keep the list visible: mutation failures are warnings,
                 // not load errors, and the row stays with its old state.
+                if (isUndo) {
+                    m_undoInFlight = false;
+                }
                 m_warningMessage = result.errorMessage.isEmpty()
                     ? QStringLiteral("Could not update the issue. Please retry.")
                     : result.errorMessage;
@@ -314,8 +340,12 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                     return a.updatedAt > b.updatedAt;
                 });
                 applyRepoFilter();
+                m_undoInFlight = false;
                 clearUndo();
             } else {
+                if (isUndo) {
+                    m_undoInFlight = false;
+                }
                 clearUndo();
             }
         });
@@ -323,6 +353,7 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
 
 void IssueController::clearUndo()
 {
+    m_undoInFlight = false;
     if (m_undo.id == 0 && m_undoMessage.isEmpty()) {
         return;
     }

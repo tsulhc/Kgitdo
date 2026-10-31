@@ -141,7 +141,7 @@ GitHubClient::UpdateResult GitHubClient::mapUpdateResponse(const IssueHttpResult
         out.forbidden = true;
         out.errorMessage = message.isEmpty()
             ? QStringLiteral(
-                  "GitHub refused the change: the app may not be installed on this repository or you lack access.")
+                  "GitHub refused the change: check the app installation on this repository and your access.")
             : QStringLiteral("GitHub refused the change: %1").arg(message);
         return out;
     }

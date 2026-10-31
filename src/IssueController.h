@@ -145,4 +145,5 @@ private:
     };
     UndoClose m_undo;
     QString m_undoMessage;
+    bool m_undoInFlight = false; // undo PATCH outstanding: second undo is a no-op
 };
