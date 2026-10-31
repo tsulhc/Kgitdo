@@ -7,7 +7,7 @@
 The goal is simple: keep track of issues you created or were assigned to, across repositories, in a clean checklist that feels at home on KDE Plasma. No full Git client, no heavyweight project-management suite, and no second task database to maintain.
 
 > [!IMPORTANT]
-> **Project status: W4 close/reopen implemented.** This README describes the intended product and its initial scope. The Kirigami shell builds and runs with GitHub App device-flow sign-in, KWallet session persistence, and an issue checklist (All/Assigned/Created views, Open/Closed state, repository filter) over issues assigned to you or created by you; the checkbox closes an open issue (or reopens a closed one) directly on GitHub, with a short undo window after closing.
+> **Project status: W5 robustness pass.** This README describes the intended product and its initial scope. The Kirigami shell builds and runs with GitHub App device-flow sign-in, KWallet session persistence, and an issue checklist (All/Assigned/Created views, Open/Closed state, repository filter) over issues assigned to you or created by you; the checkbox closes an open issue (or reopens a closed one) directly on GitHub, with a short undo window after closing. Rate-limit failures surface a retry countdown from the server headers.
 
 ## Why Kgitdo?
 

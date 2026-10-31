@@ -220,6 +220,15 @@ IssueHttpResult httpOk(const QByteArray &body)
     return result;
 }
 
+IssueHttpResult httpRateLimited(int retryAfterSecs)
+{
+    IssueHttpResult result;
+    result.httpStatus = 429;
+    result.headers.insert(QStringLiteral("retry-after"), QString::number(retryAfterSecs));
+    result.body = QByteArray("{\"message\":\"API rate limit exceeded\"}");
+    return result;
+}
+
 IssueHttpResult httpUpdate(const char *state)
 {
     IssueHttpResult result;
@@ -276,6 +285,7 @@ private Q_SLOTS:
     void unknownRepoShowsEmptyButKeepsLoaded();
     void errorPropagates();
     void unauthorizedMessage();
+    void rateLimitPropagatesWithRetryAfter();
     void partialDataWarns();
     void incompleteWarns();
     void concurrentReloadGuarded();
@@ -436,6 +446,26 @@ void IssueControllerTest::unauthorizedMessage()
     IssueController controller(auth, &client);
     controller.reload();
     QVERIFY(controller.errorMessage().contains(QStringLiteral("sign in"), Qt::CaseInsensitive));
+}
+
+void IssueControllerTest::rateLimitPropagatesWithRetryAfter()
+{
+    // Both All-view queries hit 429 with Retry-After: the controller must
+    // surface the blocking error plus the machine-readable countdown the
+    // QML banner renders, and keep no stale issues.
+    FakeIssueApi api;
+    api.queue.append(httpRateLimited(45));
+    api.queue.append(httpRateLimited(45));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QVERIFY(!controller.loading());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    QVERIFY(!controller.errorMessage().isEmpty());
+    QCOMPARE(controller.loadedCount(), 0);
+    QCOMPARE(controller.visibleCount(), 0);
 }
 
 void IssueControllerTest::partialDataWarns()

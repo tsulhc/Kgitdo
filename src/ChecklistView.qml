@@ -163,6 +163,16 @@ ColumnLayout {
             Controls.Label {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
+                // Machine-readable countdown for 429/rate-limit failures:
+                // the controller sets retryAfterSecs from the Retry-After
+                // / rate-limit-reset headers.
+                visible: issueController.rateLimited && issueController.retryAfterSecs > 0
+                text: i18n("Retry available in %1 seconds.", issueController.retryAfterSecs)
+                Accessible.name: text
+            }
+            Controls.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
                 visible: issueController.hasWarning
                 text: issueController.warningMessage
                 opacity: 0.9
