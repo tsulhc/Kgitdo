@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 
 #include "AuthSession.h"
@@ -153,4 +154,11 @@ private:
     UndoClose m_undo;
     QString m_undoMessage;
     bool m_undoInFlight = false; // undo PATCH outstanding: second undo is a no-op
+    // Outstanding mutation PATCH per issue id. This is the authoritative
+    // double-send guard: the model's pending flags are visual state that a
+    // reload rebuilds, so they cannot be trusted to still be set when the
+    // callback lands. Entries are added when the PATCH is sent and removed
+    // only when its callback completes or the account changes (clearAllState
+    // empties the set). Never cleared by a plain reload.
+    QSet<qlonglong> m_mutationGuard;
 };

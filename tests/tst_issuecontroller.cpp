@@ -258,8 +258,13 @@ private Q_SLOTS:
     void closeIssueRemovesRowAndEnablesUndo();
     void closeIssueDoubleSendGuarded();
     void closeIssueFailureWarnsAndClearsPending();
-    void mutationInFlightThenFailedReloadClearsPending();
+    void mutationInFlightThenFailedReloadKeepsGuard();
     void undoInFlightThenSuccessfulReloadHasNoDuplicate();
+    void secondMutationBlockedAcrossReload();
+    void closeSuccessAfterViewSwitchUpsertsIntoClosedView();
+    void reopenSuccessAfterViewSwitchUpsertsIntoOpenView();
+    void undoSuccessInClosedViewDoesNotAddOpenRow();
+    void lateUndoSuccessKeepsNewerUndo();
     void reopenIssueRemovesRow();
     void undoLastCloseReopensAndRestores();
     void logoutDiscardsInFlightMutation();
@@ -724,13 +729,12 @@ void IssueControllerTest::closeIssueDoubleSendGuarded()
     QVERIFY(controller.canUndoClose());
 }
 
-void IssueControllerTest::mutationInFlightThenFailedReloadClearsPending()
+void IssueControllerTest::mutationInFlightThenFailedReloadKeepsGuard()
 {
-    // A reload releases in-flight mutation pending flags, but it must NOT
-    // fence a successful mutation result: success reflects server truth,
-    // so it still converges locally (row dropped, undo offered) even when
-    // the reload itself failed and kept the old list. Only logout or a
-    // new-identity sign-in fences mutations.
+    // A failed reload keeps the old list, and the outstanding mutation is
+    // still live (plain reloads never fence it): the row must stay pending
+    // and a second dispatch for the same issue must send nothing. When the
+    // late result arrives it still converges (row dropped, undo offered).
     FakeIssueApi api;
     api.deferUpdate = true;
     api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
@@ -745,16 +749,171 @@ void IssueControllerTest::mutationInFlightThenFailedReloadClearsPending()
     IssueHttpResult failed;
     failed.transportError = QStringLiteral("offline");
     api.queue.append(failed);
-    controller.reload(); // fails; old list preserved, pending released
-    QVERIFY(!controller.model()->isIssuePending(1));
+    controller.reload(); // fails; old list preserved, mutation still live
+    QVERIFY(controller.model()->isIssuePending(1));
     QCOMPARE(controller.loadedCount(), 1);
     QVERIFY(!controller.errorMessage().isEmpty());
+    controller.closeIssue(id); // duplicate while outstanding: no second PATCH
+    QCOMPARE(api.updateRequests.size(), 1);
     // The orphaned mutation result arrives late and must still converge:
     // the server confirmed the close, so the row drops and undo is offered.
     api.updateQueue.append(httpUpdate("closed"));
     api.fireUpdates();
     QCOMPARE(controller.loadedCount(), 0);
     QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::secondMutationBlockedAcrossReload()
+{
+    // A successful reload rebuilds the model (losing visual pending flags)
+    // while the PATCH is still outstanding: the controller-side guard must
+    // still block a second dispatch, and the row is re-marked pending.
+    FakeIssueApi api;
+    api.deferUpdate = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    controller.reload(); // succeeds; model rebuilt, mutation still outstanding
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(controller.model()->isIssuePending(1));
+    controller.closeIssue(rowId(controller, 0)); // still guarded: no second PATCH
+    QCOMPARE(api.updateRequests.size(), 1);
+    api.updateQueue.append(httpUpdate("closed"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::closeSuccessAfterViewSwitchUpsertsIntoClosedView()
+{
+    // Close dispatched in the Open view; the user switches to Closed before
+    // the PATCH lands. Success must converge into the CURRENT view: the
+    // now-closed issue is upserted, never dropped, never wrong-state.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    api.deferUpdate = true;
+    api.defer = true;
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    controller.setIssueState(IssueController::StateClosed);
+    api.queue.append(httpOk(pageJson({}))); // closed list fetched pre-commit
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 0);
+    api.updateQueue.append(httpUpdate("closed"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 1);
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::reopenSuccessAfterViewSwitchUpsertsIntoOpenView()
+{
+    // Mirror: reopen dispatched in the Closed view; the user switches to
+    // Open before the PATCH lands. Success upserts the now-open issue.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({closedItemJson(1, 7, "A", "o/r")})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.setIssueState(IssueController::StateClosed);
+    QCOMPARE(controller.loadedCount(), 1);
+    api.deferUpdate = true;
+    api.defer = true;
+    const QString id = rowId(controller, 0);
+    controller.reopenIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    QVERIFY(!api.updateRequests.at(0).closed);
+    controller.setIssueState(IssueController::StateOpen);
+    api.queue.append(httpOk(pageJson({}))); // open list fetched pre-commit
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 0);
+    api.updateQueue.append(httpUpdate("open"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 1);
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(!controller.canUndoClose()); // reopens offer no undo
+}
+
+void IssueControllerTest::undoSuccessInClosedViewDoesNotAddOpenRow()
+{
+    // Undo reopens the issue, but the user already switched to the Closed
+    // view: the confirmed-open issue must NOT be appended to the closed
+    // list. The undo is still spent.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.closeIssue(rowId(controller, 0));
+    QVERIFY(controller.canUndoClose());
+    api.deferUpdate = true;
+    api.defer = true;
+    controller.setIssueState(IssueController::StateClosed);
+    api.queue.append(httpOk(pageJson({})));
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 0);
+    controller.undoLastClose();
+    QCOMPARE(api.updateRequests.size(), 2);
+    api.updateQueue.append(httpUpdate("open"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 0);
+    QCOMPARE(controller.visibleCount(), 0);
+    QVERIFY(!controller.canUndoClose());
+}
+
+void IssueControllerTest::lateUndoSuccessKeepsNewerUndo()
+{
+    // Undo for A is in flight when B is closed successfully, replacing the
+    // snapshot. A's late undo success must restore A but keep B's offer —
+    // and B's offer must still work afterwards.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed")); // A's close
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 2);
+    controller.closeIssue(rowId(controller, 0)); // closes A (id 1)
+    QVERIFY(controller.canUndoClose());
+    QVERIFY(controller.undoMessage().contains(QStringLiteral("o/r#7")));
+    api.deferUpdate = true;
+    controller.undoLastClose(); // undo A held in flight
+    QCOMPARE(api.updateRequests.size(), 2);
+    api.updateQueue.append(httpUpdate("closed")); // B's close
+    api.deferUpdate = false;
+    controller.closeIssue(rowId(controller, 0)); // closes B (id 2)
+    QCOMPARE(api.updateRequests.size(), 3);
+    QVERIFY(controller.undoMessage().contains(QStringLiteral("o/r#8")));
+    // A's late undo success: A returns, B's offer survives.
+    api.updateQueue.append(httpUpdate("open")); // A's undo
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 1);
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(controller.canUndoClose());
+    QVERIFY(controller.undoMessage().contains(QStringLiteral("o/r#8")));
+    // B's offer still works: undo reopens B and spends the snapshot.
+    api.updateQueue.append(httpUpdate("open")); // B's undo
+    controller.undoLastClose();
+    QCOMPARE(controller.loadedCount(), 2);
+    QVERIFY(!controller.canUndoClose());
 }
 
 void IssueControllerTest::undoInFlightThenSuccessfulReloadHasNoDuplicate()
