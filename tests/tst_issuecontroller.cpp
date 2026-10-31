@@ -602,7 +602,9 @@ void IssueControllerTest::mutationNonRateFailurePreservesOtherRateOutcome()
     // Mutation A hits the rate limit (outcome owned by A); an unrelated
     // mutation B then fails without a rate limit. B's failure updates the
     // warning to its own message but must preserve A's countdown and
-    // ownership; A's own retry success then retires it.
+    // ownership; A's own retry success retires the rate outcome while
+    // keeping B's still-unresolved warning (ownership applies to the
+    // warning too: one mutation's success must not retire another's).
     FakeIssueApi api;
     api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/r")})));
     api.queue.append(httpOk(pageJson({})));
@@ -631,9 +633,13 @@ void IssueControllerTest::mutationNonRateFailurePreservesOtherRateOutcome()
     QCOMPARE(controller.retryAfterSecs(), 45);
     controller.closeIssue(idA); // A's own retry
     QCOMPARE(controller.loadedCount(), 1); // A converged, B kept
-    QVERIFY(!controller.hasWarning());
+    // A's rate outcome retired, but B's still-unresolved warning survives
+    // A's success: resolving one mutation must not retire another's.
     QVERIFY(!controller.rateLimited());
     QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("installation"),
+                                                  Qt::CaseInsensitive));
     QVERIFY(controller.canUndoClose()); // undo moved to A
 }
 
