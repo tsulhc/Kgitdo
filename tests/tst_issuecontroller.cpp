@@ -284,6 +284,8 @@ private Q_SLOTS:
     void lateUndoSuccessKeepsNewerUndo();
     void staleCallbackDoesNotReleaseNewAccountGuard();
     void overlappingUndoRejectedThenFailureKeepsUndoUsable();
+    void closeSuccessAfterScopeSwitchOmitsOutOfScopeIssue();
+    void closeSuccessAfterScopeSwitchUpsertsInScopeIssue();
     void reopenIssueRemovesRow();
     void undoLastCloseReopensAndRestores();
     void logoutDiscardsInFlightMutation();
@@ -1281,6 +1283,75 @@ void IssueControllerTest::reloginDiscardsInFlightMutation()
                  .toString(),
              QStringLiteral("BobIssue"));
     QVERIFY(!controller.canUndoClose());
+}
+
+void IssueControllerTest::closeSuccessAfterScopeSwitchOmitsOutOfScopeIssue()
+{
+    // Close dispatched in All; the user switches scope to Assigned and
+    // state to Closed before the PATCH lands. The issue is authored, not
+    // assigned: success must NOT append it to the Assigned list, though
+    // the close undo is still offered and functional.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")}))); // All/authored
+    api.queue.append(httpOk(pageJson({}))); // All/assigned
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    api.deferUpdate = true;
+    api.defer = true;
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    controller.setView(IssueController::ViewAssigned);
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")}))); // assigned/open, pre-commit
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.setIssueState(IssueController::StateClosed);
+    api.queue.append(httpOk(pageJson({}))); // assigned/closed, pre-commit
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 0);
+    api.updateQueue.append(httpUpdate("closed"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 0); // out of scope: not appended
+    QCOMPARE(controller.visibleCount(), 0);
+    QVERIFY(controller.canUndoClose());
+    controller.undoLastClose(); // the offer still works
+    QCOMPARE(api.updateRequests.size(), 2);
+}
+
+void IssueControllerTest::closeSuccessAfterScopeSwitchUpsertsInScopeIssue()
+{
+    // Mirror: the issue IS assigned to the user, so the Closed/Assigned
+    // list legitimately gains it when the close succeeds mid-switch.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({}))); // All/authored
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")}))); // All/assigned
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    api.deferUpdate = true;
+    api.defer = true;
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    controller.setView(IssueController::ViewAssigned);
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")}))); // assigned/open, pre-commit
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.setIssueState(IssueController::StateClosed);
+    api.queue.append(httpOk(pageJson({}))); // assigned/closed, pre-commit
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 0);
+    api.updateQueue.append(httpUpdate("closed"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 1); // in scope: upserted
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(controller.canUndoClose());
+    QVERIFY(!controller.model()->isIssuePending(1));
 }
 
 QTEST_MAIN(IssueControllerTest)

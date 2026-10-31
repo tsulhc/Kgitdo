@@ -372,7 +372,14 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
             // needed and no wrong-state row can appear.
             const bool confirmedInView = (closed && m_issueState == StateClosed)
                 || (!closed && m_issueState == StateOpen);
-            if (confirmedInView) {
+            // Scope view matters too: the state filter alone cannot prove
+            // membership in Assigned/Created. A close started in All may
+            // succeed after the user switched to Assigned, and an
+            // unassigned issue must not be appended to that list.
+            const bool inScopeView = (m_view == ViewAll)
+                || (m_view == ViewAssigned && target.isAssignedToMe)
+                || (m_view == ViewCreated && target.isAuthoredByMe);
+            if (confirmedInView && inScopeView) {
                 Issue converged = target;
                 converged.state = closed ? QStringLiteral("closed") : QStringLiteral("open");
                 // The row must be interactive: target may predate the latest
