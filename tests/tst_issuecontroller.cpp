@@ -170,6 +170,20 @@ public:
         }
         callback(result);
     }
+
+    void fireUpdateAt(int index)
+    {
+        // Complete one deferred PATCH out of order: models network
+        // responses arriving in a different order than requests were sent.
+        // Queues stay index-aligned (responses are pre-queued in dispatch
+        // order), so the indexed request meets its own response.
+        if (index < 0 || index >= updatePending.size() || index >= updateQueue.size()) {
+            return;
+        }
+        auto callback = updatePending.takeAt(index);
+        const IssueHttpResult result = updateQueue.takeAt(index);
+        callback(result);
+    }
 };
 
 namespace
@@ -1481,8 +1495,9 @@ void IssueControllerTest::staleUndoCallbackDoesNotClearNewAccountUndo()
     auth->logout();
     QCOMPARE(controller.loadedCount(), 0);
     // Bob signs in on the same controller; his list carries the same issue
-    // id, and his own close+undo go in flight. Alice's fenced undo response
-    // is queued first so fireOneUpdate lands on it.
+    // id, and his own close+undo go in flight. Responses are queued in
+    // dispatch order; fireUpdateAt lands them out of order to model the
+    // stale response arriving late.
     api.updateQueue.append(httpUpdate("closed")); // alice's undo (fenced)
     api.queue.append(httpOk(pageJson({itemJson(1, 7, "BobIssue", "o/b")})));
     api.queue.append(httpOk(pageJson({})));
@@ -1513,18 +1528,23 @@ void IssueControllerTest::staleUndoCallbackDoesNotClearNewAccountUndo()
     api.updateQueue.append(httpUpdate("closed")); // bob's close
     controller.closeIssue(rowId(controller, 0)); // req 3
     QCOMPARE(api.updateRequests.size(), 3);
-    QVERIFY(controller.canUndoClose());
+    // Bob's close response overtakes alice's stale one (network
+    // reordering): fire it out of order so his undo offer exists before
+    // the stale callback lands.
+    api.fireUpdateAt(1); // bob's close succeeds: undo armed
+    QVERIFY(controller.canUndoClose()); // bob's offer
     api.updateQueue.append(httpUpdate("open")); // bob's undo
     controller.undoLastClose(); // req 4, deferred in flight
     QCOMPARE(api.updateRequests.size(), 4);
     QVERIFY(controller.undoInFlightForTesting());
-    // Alice's stale undo lands first and is fenced: it must not release
-    // bob's guard entry nor clear bob's in-flight undo flag.
-    api.fireOneUpdate();
+    // Alice's stale undo lands fenced: it must touch no current-account
+    // state — bob's in-flight flag and offer stay intact.
+    api.fireUpdateAt(0);
     QVERIFY(controller.undoInFlightForTesting());
+    QVERIFY(controller.canUndoClose()); // bob's offer intact
     controller.undoLastClose(); // still guarded: no 5th PATCH
     QCOMPARE(api.updateRequests.size(), 4);
-    api.fireUpdates(); // bob's close then undo succeed
+    api.fireUpdates(); // bob's undo succeeds
     QCOMPARE(controller.loadedCount(), 1);
     QVERIFY(!controller.canUndoClose()); // bob's undo spent
 }
