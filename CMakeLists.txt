@@ -27,6 +27,7 @@ include(FeatureSummary)
 find_package(Qt6 REQUIRED COMPONENTS
     Core
     Gui
+    Network
     Qml
     Quick
     QuickControls2
@@ -40,6 +41,7 @@ find_package(KF6 REQUIRED COMPONENTS
     CoreAddons
     QQC2DesktopStyle
     IconThemes
+    Wallet
 )
 
 ecm_find_qmlmodule(org.kde.kirigami REQUIRED)

@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QByteArray>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QtQml>
 #include <QQuickStyle>
 #include <QUrl>
@@ -8,6 +9,11 @@
 #include <KIconTheme>
 #include <KLocalizedContext>
 #include <KLocalizedString>
+
+#include "AuthSession.h"
+#include "GitHubAppConfig.h"
+#include "KWalletSecureStore.h"
+#include "QNetworkAuthTransport.h"
 
 int main(int argc, char *argv[])
 {
@@ -27,13 +33,23 @@ int main(int argc, char *argv[])
         QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
     }
 
+    auto *network = new QNetworkAuthTransport(&app);
+    auto *store = new KWalletSecureStore(&app);
+    auto *authSession = new AuthSession(network, store, &app);
+    authSession->setClientId(GitHubAppConfig::clientIdFromEnvironment());
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
+    engine.rootContext()->setContextProperty(QStringLiteral("authSession"), authSession);
+    engine.rootContext()->setContextProperty(QStringLiteral("manageInstallationsUrl"),
+                                             GitHubAppConfig::manageInstallationsUrl());
     engine.loadFromModule(QStringLiteral("org.kde.kgitdo"), QStringLiteral("Main"));
 
     if (engine.rootObjects().isEmpty()) {
         return -1;
     }
+
+    authSession->restore();
 
     return app.exec();
 }
