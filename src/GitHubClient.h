@@ -32,6 +32,9 @@ public:
         // Error when !ok, warning when ok (partial data). No secrets.
         QString errorMessage;
     };
+public:
+    static constexpr int kMaxPagesPerQuery = 10; // 10 x 100 = search cap
+
     using FetchCallback = std::function<void(FetchResult)>;
 
     // Maps one raw HTTP search response to a fetch-level outcome. Pure
@@ -55,7 +58,5 @@ public:
                      const QString &login, FetchCallback callback);
 
 private:
-    static constexpr int kMaxPagesPerQuery = 10; // 10 x 100 = search cap
-
     IIssueApi *m_api = nullptr;
 };
