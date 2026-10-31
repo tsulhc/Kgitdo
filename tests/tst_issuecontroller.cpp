@@ -303,6 +303,7 @@ private Q_SLOTS:
     void partialLoadRateLimitSurvivesMutationSuccess();
     void overlappingMutationKeepsOtherRateOutcome();
     void mutationNonRateFailurePreservesOtherRateOutcome();
+    void nonRateFailureThenSameMutationSuccessClearsOwnWarning();
     void siblingWarningSurvivesUnrelatedMutationSuccess();
     void mutationInFlightThenFailedReloadKeepsGuard();
     void undoInFlightThenSuccessfulReloadHasNoDuplicate();
@@ -641,6 +642,36 @@ void IssueControllerTest::mutationNonRateFailurePreservesOtherRateOutcome()
     QVERIFY(controller.warningMessage().contains(QStringLiteral("installation"),
                                                   Qt::CaseInsensitive));
     QVERIFY(controller.canUndoClose()); // undo moved to A
+}
+
+void IssueControllerTest::nonRateFailureThenSameMutationSuccessClearsOwnWarning()
+{
+    // A non-rate failure (403) arms no countdown but owns the warning; the
+    // same mutation's retry success must retire its own message even though
+    // the rate gate is uninvolved (the warning retire is independent of it).
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    IssueHttpResult denied;
+    denied.httpStatus = 403;
+    denied.body = QByteArray("{\"message\":\"Must have push access\"}");
+    api.updateQueue.append(denied);
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QVERIFY(controller.hasWarning());
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.loadedCount(), 1); // row stays on failure
+    controller.closeIssue(id); // own retry; failure released the guard
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.hasWarning());
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.canUndoClose());
 }
 
 void IssueControllerTest::partialDataWarns()

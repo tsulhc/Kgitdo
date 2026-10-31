@@ -391,14 +391,16 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 m_retryAfterSecs = 0;
                 m_rateLimitedMutationId = 0;
                 Q_EMIT outcomeChanged();
-                // Clear the warning only when this mutation also owns it:
-                // a sibling mutation's failure message stays until its own
-                // owner resolves it.
-                if (m_warningOwnerId == id) {
-                    m_warningMessage.clear();
-                    m_warningOwnerId = 0;
-                    Q_EMIT warningChanged();
-                }
+            }
+            // Clear the warning only when this mutation also owns it: a
+            // sibling mutation's failure message (or a fetch-owned warning)
+            // stays until its own owner resolves it. Independent of the
+            // rate-limit retire above: a non-rate failure arms no countdown
+            // but its retry must still retire its own message.
+            if (m_warningOwnerId == id) {
+                m_warningMessage.clear();
+                m_warningOwnerId = 0;
+                Q_EMIT warningChanged();
             }
             if (closed && !isUndo) {
                 // Snapshot the coordinates for one-shot undo.
