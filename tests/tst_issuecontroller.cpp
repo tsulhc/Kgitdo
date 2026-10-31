@@ -9,6 +9,11 @@
 class TinyAuthNetwork : public IAuthNetwork
 {
 public:
+    explicit TinyAuthNetwork(QObject *parent = nullptr)
+        : IAuthNetwork(parent)
+    {
+    };
+public:
     QList<UserResult> userQueue;
 
     void requestDeviceCode(const QString &, std::function<void(DeviceCodeResult)> callback) override
