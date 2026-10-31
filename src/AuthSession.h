@@ -68,6 +68,9 @@ public:
     // Test/debug accessors (no secrets exposed to QML).
     QString accessTokenForTesting() const { return m_accessToken; }
     int loginAttemptId() const { return m_attemptId; }
+    // C++-only bearer token for API clients (GitHubClient). Plain method:
+    // not a Q_PROPERTY/Q_INVOKABLE, so QML cannot reach it.
+    QString currentAccessToken() const { return m_accessToken; }
 
     void setClientId(const QString &clientId);
 

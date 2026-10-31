@@ -83,6 +83,12 @@ Limits: a GitHub App token can only access repositories where the app is **insta
 
 Security: tokens never live in plain files, logs, QSettings, or CI. `401` (revoked/expired) and `bad_refresh_token` clear local state and require sign-in again.
 
+## Reading issues (search API)
+
+After sign-in the app loads open issues **assigned to you or created by you** across the repositories the GitHub App installation can see, using two `GET /search/issues` queries (`author:<login>` and `assignee:<login>`, `is:issue`, newest first, 100 per page) whose results are merged and deduplicated by stable issue id — an issue from both queries appears exactly once with both provenances. Pull-request entries are never shown. Views (All / Assigned / Created) and Open / Closed reload from GitHub; the repository filter applies to loaded data, with loaded/visible counts, so a narrow filter is never confused with an empty account.
+
+Partial results are always explicit: the UI warns when GitHub reports `incomplete_results`, when the 1,000-result search cap is hit, or when pagination is interrupted (data loaded so far stays visible). `401` asks for sign-in again; rate limits (`429`/`403` quota, `Retry-After` / `X-RateLimit-Reset`) surface a wait-and-retry warning instead of retrying in a loop.
+
 ## Non-goals
 
 Kgitdo is **not** intended to replace GitHub Issues, GitHub Projects, a Git client, or a general-purpose project-management application. It should not require copying issues into another service to track progress.
