@@ -68,6 +68,18 @@ These are the implemented stack for the W0 foundation (minimal Kirigami shell) p
 
 Kgitdo signs in with a **GitHub App** using the device authorization flow for public desktop clients. No client secret is distributed or stored.
 
+### Obtaining a client ID (one-time setup)
+
+Kgitdo needs the **public client ID** of a GitHub App registered by you (or your organization). Device flow uses only this public ID — never a client secret or private key.
+
+1. Open <https://github.com/settings/apps> and choose **New GitHub App**. Fill in a name and homepage URL.
+2. Under **Permissions**, grant the minimum the app needs: repository **Issues: Read and write** plus **Metadata: Read-only**. Do not add broader permissions.
+3. Create the app, then **install** it on your account (and on any organization repositories you want to track) from the app's **Install App** page. Organization installs may need an administrator's approval.
+4. Copy the **Client ID** shown on the app's settings page and export it as `KGITDO_GITHUB_CLIENT_ID` before starting Kgitdo (see step 1 below).
+5. If sign-in reports an unknown client ID, double-check the copied value. Never paste a client secret or private key anywhere near this app.
+
+Official reference: <https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app>
+
 1. Set the public client ID and run the app:
 
    ```bash
