@@ -1,6 +1,5 @@
-// Kgitdo shell with GitHub App device-flow sign-in (W1).
-// Issue checklist arrives with W2/W3; this page proves secure sign-in,
-// session restore, KWallet persistence, and user-visible auth states.
+// Kgitdo shell with GitHub App device-flow sign-in (W1),
+// issue reading (W2), and the Kirigami checklist view (W3).
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as Controls
@@ -28,9 +27,17 @@ Kirigami.ApplicationWindow {
         readonly property bool isFailed: authSession.status === 5
         readonly property bool isSignedOut: authSession.status === 0
 
+        // Signed-in users get the W3 checklist; everyone else keeps the
+        // W1 sign-in card below.
+        ChecklistView {
+            anchors.fill: parent
+            visible: isAuthenticated
+        }
+
         Kirigami.CardsLayout {
             anchors.fill: parent
             maximumColumns: 1
+            visible: !isAuthenticated
 
             Kirigami.AbstractCard {
                 contentItem: ColumnLayout {
@@ -99,57 +106,7 @@ Kirigami.ApplicationWindow {
                         }
                     }
 
-                    // Authenticated view.
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: authSession.clientIdConfigured && isAuthenticated
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
-                            visible: authSession.volatileSession
-                            text: i18n("Wallet unavailable: this session is kept only in memory and will not survive a restart.")
-                        }
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
-                            text: i18n("Issue list arrives in the next milestone. Sign-in and session restore already work.")
-                            opacity: 0.7
-                        }
-                        RowLayout {
-                            Layout.alignment: Qt.AlignHCenter
-                            spacing: Kirigami.Units.smallSpacing
-                            Controls.Button {
-                                text: i18n("Refresh session")
-                                enabled: !authSession.pending
-                                onClicked: authSession.refreshSession()
-                                Accessible.name: text
-                            }
-                            Controls.Button {
-                                text: i18n("Sign out")
-                                enabled: !authSession.pending
-                                onClicked: authSession.logout()
-                                Accessible.name: text
-                            }
-                        }
-                        Controls.Label {
-                            Layout.fillWidth: true
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
-                            text: i18n("Sign-out removes credentials from this device only. To revoke GitHub access, manage the app on github.com.")
-                            opacity: 0.7
-                        }
-                        Controls.Button {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: i18n("Manage GitHub App installations")
-                            onClicked: authSession.openManageInstallationsPage()
-                            Accessible.name: text
-                        }
-                    }
-
+                    // Authenticated users see the checklist (ChecklistView above).
                     // Awaiting authorization: device code + browser step.
                     ColumnLayout {
                         Layout.fillWidth: true

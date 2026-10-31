@@ -7,7 +7,7 @@
 The goal is simple: keep track of issues you created or were assigned to, across repositories, in a clean checklist that feels at home on KDE Plasma. No full Git client, no heavyweight project-management suite, and no second task database to maintain.
 
 > [!IMPORTANT]
-> **Project status: W1 auth implemented.** This README describes the intended product and its initial scope. The Kirigami shell builds and runs with GitHub App device-flow sign-in and KWallet session persistence; the issue checklist arrives in the next milestones.
+> **Project status: W3 checklist implemented.** This README describes the intended product and its initial scope. The Kirigami shell builds and runs with GitHub App device-flow sign-in, KWallet session persistence, and a read-only issue checklist (All/Assigned/Created views, Open/Closed state, repository filter) over issues assigned to you or created by you; closing and reopening issues arrives in the next milestone.
 
 ## Why Kgitdo?
 
