@@ -240,6 +240,13 @@ Kirigami.ApplicationWindow {
                         }
                         Controls.Button {
                             Layout.alignment: Qt.AlignHCenter
+                            visible: authSession.clearFailed && !authSession.pending
+                            text: i18n("Retry removing saved credentials")
+                            onClicked: authSession.retryClear()
+                            Accessible.name: text
+                        }
+                        Controls.Button {
+                            Layout.alignment: Qt.AlignHCenter
                             text: i18n("Sign in with GitHub")
                             enabled: !authSession.pending
                             onClicked: authSession.startLogin()

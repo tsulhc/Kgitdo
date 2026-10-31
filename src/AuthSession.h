@@ -31,6 +31,7 @@ class AuthSession : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool clientIdConfigured READ clientIdConfigured NOTIFY clientIdChanged)
     Q_PROPERTY(bool volatileSession READ isVolatileSession NOTIFY volatileSessionChanged)
+    Q_PROPERTY(bool clearFailed READ clearFailed NOTIFY clearFailedChanged)
     Q_PROPERTY(bool hasSecureStorage READ hasSecureStorage NOTIFY secureStorageChanged)
     Q_PROPERTY(QString clientId READ clientId WRITE setClientId NOTIFY clientIdChanged)
 
@@ -59,6 +60,10 @@ public:
     QString clientId() const { return m_clientId; }
     bool clientIdConfigured() const { return !m_clientId.isEmpty(); }
     bool isVolatileSession() const { return m_volatileSession; }
+    // True when a logout/revocation cleanup could not remove the persisted
+    // credentials. The UI offers retryClear() in that state; the flag clears
+    // on a successful removal or a fresh successful persist.
+    bool clearFailed() const { return m_clearFailed; }
     bool hasSecureStorage() const;
     // Test/debug accessors (no secrets exposed to QML).
     QString accessTokenForTesting() const { return m_accessToken; }
@@ -71,6 +76,9 @@ public:
     Q_INVOKABLE void retry();
     Q_INVOKABLE void refreshSession();
     Q_INVOKABLE void logout();
+    // Retries removing persisted credentials after a failed cleanup
+    // (clearFailed). Clears the warning on success; keeps it otherwise.
+    Q_INVOKABLE void retryClear();
     Q_INVOKABLE void restore();
     Q_INVOKABLE void openVerificationPage();
     Q_INVOKABLE void openManageInstallationsPage();
@@ -88,6 +96,7 @@ Q_SIGNALS:
     void errorMessageChanged();
     void clientIdChanged();
     void volatileSessionChanged();
+    void clearFailedChanged();
     void secureStorageChanged();
 
 private:
@@ -101,6 +110,7 @@ private:
     bool isAccessExpired() const;
     qint64 nowSecs() const;
     void persistCurrentTokens();
+    void setClearFailed(bool failed);
     // Clears the volatile fallback and the secure store. True when nothing
     // may remain: callers must warn instead of claiming a clean logout
     // when this returns false.
@@ -133,6 +143,7 @@ private:
     int m_pollIntervalSeconds = 5;
 
     bool m_volatileSession = false;
+    bool m_clearFailed = false;
     int m_attemptId = 0;
     QTimer *m_pollTimer = nullptr;
 };

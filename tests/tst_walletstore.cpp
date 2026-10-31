@@ -19,6 +19,9 @@ public:
     QMap<QString, QByteArray> entries;
     QSet<QString> failingWrites;
     QSet<QString> failingRemoves;
+    // Simulates wallet read errors: reads of these keys fail even when the
+    // entry exists, mirroring a wallet that errors mid-operation.
+    QSet<QString> failingReads;
     QStringList removedKeys;
     bool wasOpened = false;
 
@@ -62,7 +65,7 @@ public:
 
     bool readSecret(const QString &key, QString &value) override
     {
-        if (!entries.contains(key)) {
+        if (failingReads.contains(key) || !entries.contains(key)) {
             return false;
         }
         value = QString::fromUtf8(entries.value(key));
@@ -71,7 +74,7 @@ public:
 
     bool readBlob(const QString &key, QByteArray &value) override
     {
-        if (!entries.contains(key)) {
+        if (failingReads.contains(key) || !entries.contains(key)) {
             return false;
         }
         value = entries.value(key);
@@ -98,12 +101,20 @@ public:
 
     bool remove(const QString &key) override
     {
+        // Simulates the KWallet primitives and interprets them with the same
+        // production policy, so policy regressions fail here too.
         removedKeys << key;
-        if (failingRemoves.contains(key)) {
-            return false;
+        const bool removeSucceeded = !failingRemoves.contains(key);
+        if (removeSucceeded) {
+            entries.remove(key);
         }
-        entries.remove(key);
-        return !entries.contains(key);
+        const bool listed = entries.contains(key);
+        QString secret;
+        QByteArray blob;
+        const bool secretReadable = readSecret(key, secret);
+        const bool blobReadable = readBlob(key, blob);
+        return WalletRemovePolicy::confirmRemoved(removeSucceeded, listed, secretReadable,
+                                                  blobReadable);
     }
 };
 
@@ -145,6 +156,9 @@ private Q_SLOTS:
     void clearFolderSelectFailureReportsFailure();
     void clearOpenFailureReportsFailure();
     void clearRemoveFailureReportsFailure();
+    void clearApiFailureWithUnreadableStateReportsFailure();
+    void clearAbsentKeysDespiteApiErrorsReportsSuccess();
+    void removePolicyDecisionTable();
     void disabledBackendLoadSaveFailClearSucceeds();
 };
 
@@ -327,6 +341,61 @@ void WalletStoreTest::clearRemoveFailureReportsFailure()
     QVERIFY(backend.entries.contains(QStringLiteral("accessToken")));
     StoredTokens loaded;
     QVERIFY(!store.load(loaded));
+}
+
+void WalletStoreTest::clearApiFailureWithUnreadableStateReportsFailure()
+{
+    // Regression (R7): the production backend ignored removeEntry's return
+    // code and treated unreadability as proof of absence, so an API failure
+    // combined with read errors was reported as successfully removed. The
+    // policy is fail-closed: a reported failure with the entry still listed
+    // is a failure even when reads also error.
+    FakeBackend backend;
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.save(makeTokens()));
+    backend.failingRemoves.insert(QStringLiteral("accessToken"));
+    backend.failingReads.insert(QStringLiteral("accessToken"));
+    QVERIFY(!store.clear());
+    QVERIFY(backend.entries.contains(QStringLiteral("accessToken")));
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+}
+
+void WalletStoreTest::clearAbsentKeysDespiteApiErrorsReportsSuccess()
+{
+    // Absence tolerance: removing keys that are not there (e.g. the commit
+    // marker on a first save, or clearing an empty folder) succeeds even
+    // when the API reports an error, as long as absence is confirmed.
+    FakeBackend backend;
+    backend.hasFolder = true;
+    backend.failingRemoves.insert(QStringLiteral("accessToken"));
+    backend.failingRemoves.insert(QStringLiteral("refreshToken"));
+    backend.failingRemoves.insert(QStringLiteral("accessExpiresAt"));
+    backend.failingRemoves.insert(QStringLiteral("login"));
+    backend.failingRemoves.insert(QStringLiteral("committed"));
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.clear());
+}
+
+void WalletStoreTest::removePolicyDecisionTable()
+{
+    using WalletRemovePolicy::confirmRemoved;
+    // Reported success, unreadable: gone.
+    QVERIFY(confirmRemoved(true, false, false, false));
+    // Reported success but still readable: silent non-removal.
+    QVERIFY(!confirmRemoved(true, true, true, true));
+    QVERIFY(!confirmRemoved(true, false, true, false));
+    QVERIFY(!confirmRemoved(true, false, false, true));
+    // Reported failure but confirmed absent (not listed, unreadable): nothing
+    // to remove.
+    QVERIFY(confirmRemoved(false, false, false, false));
+    // Reported failure with the entry still listed: failure, even when reads
+    // also error (read errors never prove absence).
+    QVERIFY(!confirmRemoved(false, true, false, false));
+    QVERIFY(!confirmRemoved(false, true, true, true));
+    // Reported failure, unlisted, but still readable: contradictory state,
+    // fail closed.
+    QVERIFY(!confirmRemoved(false, false, true, false));
 }
 
 void WalletStoreTest::disabledBackendLoadSaveFailClearSucceeds()

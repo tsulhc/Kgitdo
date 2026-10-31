@@ -171,6 +171,8 @@ public:
     {
     }
 
+    bool failClear = true;
+
     bool isAvailable() const override
     {
         return true;
@@ -189,7 +191,7 @@ public:
     }
     bool clear() override
     {
-        return false;
+        return !failClear;
     }
 
 private:
@@ -218,6 +220,8 @@ private Q_SLOTS:
     void missingClientIdFails();
     void networkErrorDuringPollIsRetryable();
     void logoutWithUnremovableWalletWarns();
+    void failedClearSetsFlagAndRetrySucceeds();
+    void retryClearWhileFailingKeepsWarning();
     void revokedSessionWithUnremovableWalletWarns();
     void badRefreshWithUnremovableWalletWarns();
 };
@@ -541,6 +545,56 @@ void AuthSessionTest::logoutWithUnremovableWalletWarns()
     QCOMPARE(session.status(), AuthSession::SignedOut);
     QVERIFY(session.userLogin().isEmpty());
     QVERIFY(session.accessTokenForTesting().isEmpty());
+    QVERIFY(session.clearFailed());
+    QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed"), Qt::CaseInsensitive));
+}
+
+void AuthSessionTest::failedClearSetsFlagAndRetrySucceeds()
+{
+    // R8: a failed logout cleanup must leave a retryable state, not just a
+    // message. retryClear() retries the removal and clears the flag and the
+    // warning once the store cooperates, without touching session state.
+    FakeAuthNetwork net;
+    ClearFailingStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makeTokenOk();
+    net.userQueue << FakeAuthNetwork::makeUserOk();
+
+    session.startLogin();
+    session.pollOnce();
+    QCOMPARE(session.status(), AuthSession::Authenticated);
+    session.logout();
+    QVERIFY(session.clearFailed());
+    QVERIFY(!session.errorMessage().isEmpty());
+
+    store.failClear = false;
+    session.retryClear();
+    QVERIFY(!session.clearFailed());
+    QVERIFY(session.errorMessage().isEmpty());
+    QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(session.accessTokenForTesting().isEmpty());
+}
+
+void AuthSessionTest::retryClearWhileFailingKeepsWarning()
+{
+    // While the store still refuses removal, retryClear() must keep both
+    // the flag and the warning so the retry affordance stays visible.
+    FakeAuthNetwork net;
+    ClearFailingStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makeTokenOk();
+    net.userQueue << FakeAuthNetwork::makeUserOk();
+
+    session.startLogin();
+    session.pollOnce();
+    session.logout();
+    QVERIFY(session.clearFailed());
+    session.retryClear();
+    QVERIFY(session.clearFailed());
     QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed"), Qt::CaseInsensitive));
 }
 
@@ -557,6 +611,7 @@ void AuthSessionTest::revokedSessionWithUnremovableWalletWarns()
     session.startLogin();
     session.pollOnce();
     QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(session.clearFailed());
     QVERIFY(session.errorMessage().contains(QStringLiteral("revoked"), Qt::CaseInsensitive));
     QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed"), Qt::CaseInsensitive));
 }
@@ -582,6 +637,7 @@ void AuthSessionTest::badRefreshWithUnremovableWalletWarns()
     net.refreshQueue << bad;
     session.refreshSession();
     QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(session.clearFailed());
     QVERIFY(session.errorMessage().contains(QStringLiteral("sign in"), Qt::CaseInsensitive));
     QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed"), Qt::CaseInsensitive));
 }

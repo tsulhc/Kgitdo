@@ -4,6 +4,24 @@
 #include <QObject>
 #include <QString>
 
+// Interpretation of one key-removal attempt's observable outcomes, shared by
+// the production backend and test simulators so there is exactly one
+// decision point to review. Fail-closed: an API-reported removal failure is
+// a failure unless absence is confirmed by two agreeing oracles (not listed
+// AND unreadable); an API-reported success is additionally verified by
+// unreadability, so a silent non-removal is still reported as a failure.
+// Read errors alone never prove absence.
+namespace WalletRemovePolicy
+{
+inline bool confirmRemoved(bool removeSucceeded, bool hasEntry, bool secretReadable, bool blobReadable)
+{
+    if (!removeSucceeded) {
+        return !hasEntry && !secretReadable && !blobReadable;
+    }
+    return !secretReadable && !blobReadable;
+}
+} // namespace WalletRemovePolicy
+
 // Minimal wallet backend contract so KWalletSecureStore can guarantee
 // atomic-feeling saves (rollback on partial failure) and honest clear()
 // results without requiring a running wallet daemon in unit tests.

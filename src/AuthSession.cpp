@@ -148,7 +148,7 @@ void AuthSession::logout()
         setError(QString());
     } else {
         setError(QStringLiteral("Signed out, but saved credentials could not be removed. "
-                                "Retry logout once the wallet is available."));
+                                "Use “Retry removing saved credentials” once the wallet is available."));
     }
     setPending(false);
     setStatus(SignedOut);
@@ -317,6 +317,9 @@ void AuthSession::persistCurrentTokens()
     stored.login = m_userLogin;
     if (m_secureStore && m_secureStore->save(stored)) {
         m_volatileSession = false;
+        // A fresh complete session is committed over everything persisted
+        // before: no stale leftovers remain to retry about.
+        setClearFailed(false);
     } else {
         // Wallet absent/refused: keep a volatile in-memory session and say so.
         m_volatileStore.save(stored);
@@ -329,10 +332,34 @@ void AuthSession::persistCurrentTokens()
 bool AuthSession::clearPersistedTokens()
 {
     m_volatileStore.clear();
+    bool cleared = true;
     if (m_secureStore) {
-        return m_secureStore->clear();
+        cleared = m_secureStore->clear();
     }
-    return true;
+    setClearFailed(!cleared);
+    return cleared;
+}
+
+void AuthSession::setClearFailed(bool failed)
+{
+    if (m_clearFailed == failed) {
+        return;
+    }
+    m_clearFailed = failed;
+    Q_EMIT clearFailedChanged();
+}
+
+void AuthSession::retryClear()
+{
+    // Only meaningful after a failed cleanup; harmless otherwise. Retries
+    // the store removal without touching session state, so a still-locked
+    // wallet keeps the warning and the retry affordance.
+    if (!m_clearFailed || !m_secureStore) {
+        return;
+    }
+    if (clearPersistedTokens()) {
+        setError(QString());
+    }
 }
 
 void AuthSession::handleDeviceCodeResult(int attemptId, const IAuthNetwork::DeviceCodeResult &result)
@@ -449,7 +476,8 @@ void AuthSession::handleRefreshResult(int attemptId, const IAuthNetwork::TokenRe
             setError(QStringLiteral("Session expired. Please sign in again."));
         } else {
             setError(QStringLiteral("Session expired. Please sign in again. "
-                                    "Saved credentials could not be removed; please sign out again to retry."));
+                                    "Saved credentials could not be removed; use “Retry removing "
+                                    "saved credentials” once the wallet is available."));
         }
         setStatus(SignedOut);
         return;
@@ -498,7 +526,8 @@ void AuthSession::handleUserResult(int attemptId, const IAuthNetwork::UserResult
             setError(QStringLiteral("Session was revoked or expired. Please sign in again."));
         } else {
             setError(QStringLiteral("Session was revoked or expired. Please sign in again. "
-                                    "Saved credentials could not be removed; please sign out again to retry."));
+                                    "Saved credentials could not be removed; use “Retry removing "
+                                    "saved credentials” once the wallet is available."));
         }
         setStatus(SignedOut);
         return;

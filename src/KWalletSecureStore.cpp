@@ -16,9 +16,10 @@ constexpr char kCommitKey[] = "committed";
 constexpr char kCommitValue[] = "1";
 } // namespace
 
-// Production KWallet backend. Removal success is verified by read-back so a
-// failed removal is never reported as cleared, regardless of how the
-// underlying removeEntry call reports its result.
+// Production KWallet backend. Removal success is decided by
+// WalletRemovePolicy from the API's own return code plus read-back: an
+// API-reported failure is fail-closed (false) unless absence is confirmed,
+// and an API-reported success is verified by unreadability.
 class KWalletBackend : public IWalletBackend
 {
 public:
@@ -106,11 +107,14 @@ public:
         if (!m_wallet) {
             return false;
         }
-        m_wallet->removeEntry(key);
-        // Verify the key is really gone instead of trusting the removal call.
+        const bool removeSucceeded = (m_wallet->removeEntry(key) == 0);
+        const bool listed = m_wallet->hasEntry(key);
         QString secret;
         QByteArray blob;
-        return m_wallet->readPassword(key, secret) != 0 && m_wallet->readEntry(key, blob) != 0;
+        const bool secretReadable = (m_wallet->readPassword(key, secret) == 0);
+        const bool blobReadable = (m_wallet->readEntry(key, blob) == 0);
+        return WalletRemovePolicy::confirmRemoved(removeSucceeded, listed, secretReadable,
+                                                 blobReadable);
     }
 
 private:
