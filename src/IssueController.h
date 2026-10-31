@@ -90,6 +90,10 @@ private:
     void setLoading(bool loading);
     void applyRepoFilter();
     void clearOutcomeFlags();
+    // Drops every account-derived state (list, repos, filter, messages,
+    // outcome flags, refresh stamp) and invalidates in-flight fetches.
+    // Shared by sign-out and new-identity sign-in cleanup.
+    void clearAllState();
 
     AuthSession *m_auth = nullptr;
     GitHubClient *m_client = nullptr;
@@ -111,4 +115,9 @@ private:
     bool m_rateLimited = false;
     int m_retryAfterSecs = 0;
     QDateTime m_lastRefresh;
+    // Login the loaded list belongs to. Compared on each Authenticated
+    // transition so a different account signing in without an intermediate
+    // sign-out (e.g. refresh failure followed by a fresh device flow) still
+    // drops the prior account's issues and reloads for the new identity.
+    QString m_lastLogin;
 };

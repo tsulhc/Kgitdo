@@ -16,16 +16,26 @@ public:
 public:
     QList<UserResult> userQueue;
     QList<TokenResult> refreshQueue;
+    QList<DeviceCodeResult> deviceQueue;
+    QList<TokenResult> pollQueue;
     bool deferRefresh = false;
     QList<std::function<void(TokenResult)>> refreshPending;
 
     void requestDeviceCode(const QString &, std::function<void(DeviceCodeResult)> callback) override
     {
+        if (!deviceQueue.isEmpty()) {
+            callback(deviceQueue.takeFirst());
+            return;
+        }
         callback(DeviceCodeResult());
     }
     void pollAccessToken(const QString &, const QString &,
                          std::function<void(TokenResult)> callback) override
     {
+        if (!pollQueue.isEmpty()) {
+            callback(pollQueue.takeFirst());
+            return;
+        }
         TokenResult result;
         result.transportError = QStringLiteral("unused");
         callback(result);
@@ -184,6 +194,7 @@ private Q_SLOTS:
     void logoutClearsList();
     void logoutClearsRepoFilter();
     void refreshPreservesIssues();
+    void reloginAsDifferentUserClearsAndReloads();
     void signedOutReloadErrors();
 };
 
@@ -504,6 +515,81 @@ void IssueControllerTest::refreshPreservesIssues()
     QCOMPARE(controller.loadedCount(), 1);
     QVERIFY(controller.errorMessage().isEmpty());
     QCOMPARE(api.requestedUrls.size(), requestsAfterLoad);
+}
+
+void IssueControllerTest::reloginAsDifferentUserClearsAndReloads()
+{
+    // Refresh failure keeps the session (and the list) alive; a fresh
+    // device flow that authenticates a DIFFERENT login without an
+    // intermediate sign-out must drop the prior account's issues and load
+    // the new account's — never show alice's tasks to bob.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "AliceIssue", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    auto *network = new TinyAuthNetwork(this);
+    auto *store = new InMemorySecureStore(this);
+    StoredTokens tokens;
+    tokens.accessToken = QStringLiteral("tok-alice");
+    tokens.refreshToken = QStringLiteral("ref-alice");
+    tokens.login = QStringLiteral("alice");
+    store->save(tokens);
+    IAuthNetwork::UserResult aliceUser;
+    aliceUser.ok = true;
+    aliceUser.login = QStringLiteral("alice");
+    network->userQueue.append(aliceUser);
+    auto *auth = new AuthSession(network, store, this);
+    auth->setClientId(QStringLiteral("cid"));
+    auth->restore();
+    QVERIFY(auth->isAuthenticated());
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    // Refresh fails but the session (and the list) survives it.
+    IAuthNetwork::TokenResult refreshFail;
+    refreshFail.ok = false;
+    refreshFail.transportError = QStringLiteral("timeout");
+    network->refreshQueue.append(refreshFail);
+    auth->refreshSession();
+    QCOMPARE(auth->status(), AuthSession::Failed);
+    QCOMPARE(controller.loadedCount(), 1);
+    // Fresh device flow authenticating bob; bob's issues are queued behind
+    // alice's (ViewAll runs the Authored then Assigned query).
+    IAuthNetwork::DeviceCodeResult device;
+    device.ok = true;
+    device.data.deviceCode = QStringLiteral("dev-code-2");
+    device.data.userCode = QStringLiteral("AAAA-BBBB");
+    device.data.verificationUri = QStringLiteral("https://github.com/login/device");
+    device.data.expiresInSeconds = 900;
+    device.data.intervalSeconds = 3600;
+    network->deviceQueue.append(device);
+    IAuthNetwork::TokenResult bobToken;
+    bobToken.ok = true;
+    bobToken.data.hasToken = true;
+    bobToken.data.accessToken = QStringLiteral("tok-bob");
+    bobToken.data.refreshToken = QStringLiteral("ref-bob");
+    bobToken.data.expiresInSeconds = 3600;
+    network->pollQueue.append(bobToken);
+    IAuthNetwork::UserResult bobUser;
+    bobUser.ok = true;
+    bobUser.login = QStringLiteral("bob");
+    network->userQueue.append(bobUser);
+    api.queue.append(httpOk(pageJson({itemJson(2, 3, "BobIssue", "o/b")})));
+    api.queue.append(httpOk(pageJson({})));
+    auth->startLogin();
+    QCOMPARE(auth->status(), AuthSession::AwaitingAuthorization);
+    // Alice's issues stay visible while the new login is pending.
+    QCOMPARE(controller.loadedCount(), 1);
+    auth->pollOnce();
+    QVERIFY(auth->isAuthenticated());
+    QCOMPARE(auth->userLogin(), QStringLiteral("bob"));
+    // The controller cleared alice's state and reloaded for bob.
+    QCOMPARE(controller.loadedCount(), 1);
+    QCOMPARE(controller.model()
+                 ->data(controller.model()->index(0), IssueListModel::TitleRole)
+                 .toString(),
+             QStringLiteral("BobIssue"));
+    QVERIFY(controller.errorMessage().isEmpty());
 }
 
 void IssueControllerTest::signedOutReloadErrors()

@@ -16,35 +16,22 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
         // tokens in the session, so neither must discard valid issue
         // state. Terminal revocations (401/bad refresh token) already
         // transition to SignedOut, which is where cleanup happens.
+        // A fresh sign-in as a different login without an intermediate
+        // sign-out (refresh failure followed by a new device flow) lands
+        // on Authenticated with a changed login: that is a new identity
+        // and must also drop the prior account's state, then reload.
         connect(m_auth, &AuthSession::statusChanged, this, [this]() {
-            if (m_auth->status() != AuthSession::SignedOut) {
+            if (m_auth->status() == AuthSession::SignedOut) {
+                clearAllState();
+                m_lastLogin.clear();
                 return;
             }
-            // Invalidate any in-flight fetch first: its callback must not
-            // repopulate the list with the pre-logout token's data, even
-            // when the list is currently empty. Bump the generation so the
-            // stale callback is ignored, and release the loading guard so a
-            // later sign-in can reload immediately.
-            ++m_generation;
-            setLoading(false);
-            m_loaded.clear();
-            m_model->setIssues({});
-            m_availableRepos.clear();
-            Q_EMIT availableReposChanged();
-            // A leftover filter would silently hide the next account's
-            // issues after re-login, so reset it and notify observers.
-            if (!m_repoFilter.isEmpty()) {
-                m_repoFilter.clear();
-                Q_EMIT repoFilterChanged();
+            if (m_auth->status() == AuthSession::Authenticated
+                && m_auth->userLogin() != m_lastLogin) {
+                clearAllState();
+                m_lastLogin = m_auth->userLogin();
+                reload();
             }
-            m_errorMessage.clear();
-            Q_EMIT errorMessageChanged();
-            m_warningMessage.clear();
-            Q_EMIT warningChanged();
-            clearOutcomeFlags();
-            m_lastRefresh = QDateTime();
-            Q_EMIT lastRefreshChanged();
-            Q_EMIT countsChanged();
         });
     }
 }
@@ -202,4 +189,33 @@ void IssueController::clearOutcomeFlags()
     m_rateLimited = false;
     m_retryAfterSecs = 0;
     Q_EMIT outcomeChanged();
+}
+
+void IssueController::clearAllState()
+{
+    // Invalidate any in-flight fetch first: its callback must not
+    // repopulate the list with the previous token's data, even when the
+    // list is currently empty. Bump the generation so the stale callback
+    // is ignored, and release the loading guard so a later sign-in can
+    // reload immediately.
+    ++m_generation;
+    setLoading(false);
+    m_loaded.clear();
+    m_model->setIssues({});
+    m_availableRepos.clear();
+    Q_EMIT availableReposChanged();
+    // A leftover filter would silently hide the next account's issues
+    // after re-login, so reset it and notify observers.
+    if (!m_repoFilter.isEmpty()) {
+        m_repoFilter.clear();
+        Q_EMIT repoFilterChanged();
+    }
+    m_errorMessage.clear();
+    Q_EMIT errorMessageChanged();
+    m_warningMessage.clear();
+    Q_EMIT warningChanged();
+    clearOutcomeFlags();
+    m_lastRefresh = QDateTime();
+    Q_EMIT lastRefreshChanged();
+    Q_EMIT countsChanged();
 }
