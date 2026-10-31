@@ -231,6 +231,7 @@ bool KWalletSecureStore::clear()
         // report failure instead of claiming a logout that cannot be verified.
         ok = false;
     } else {
+        ok = true;
         ok = m_backend->remove(QLatin1String(kAccessKey)) && ok;
         ok = m_backend->remove(QLatin1String(kRefreshKey)) && ok;
         ok = m_backend->remove(QLatin1String(kExpiresKey)) && ok;

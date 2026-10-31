@@ -264,10 +264,12 @@ void WalletStoreTest::clearRemoveFailureReportsFailure()
     QVERIFY(store.save(makeTokens()));
     backend.failingRemoves.insert(QStringLiteral("accessToken"));
     QVERIFY(!store.clear());
-    // The surviving entry is still readable: callers must warn, not claim.
+    // The entry physically survived, but without the commit marker (removed
+    // with the rest) it is unloadable: no session can be resurrected from
+    // the leftovers, and the caller must warn and offer retry.
+    QVERIFY(backend.entries.contains(QStringLiteral("accessToken")));
     StoredTokens loaded;
-    QVERIFY(store.load(loaded));
-    QCOMPARE(loaded.accessToken, QStringLiteral("ghu_saved"));
+    QVERIFY(!store.load(loaded));
 }
 
 void WalletStoreTest::disabledBackendLoadSaveFailClearSucceeds()
