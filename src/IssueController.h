@@ -120,7 +120,14 @@ private:
     QList<Issue> m_loaded;
 
     bool m_loading = false;
-    int m_generation = 0; // fetch epoch: logout bumps it so stale callbacks die
+    int m_generation = 0; // fetch epoch: reload/logout bumps it so stale fetch callbacks die
+    // Account epoch: logout and new-identity sign-in bump it so in-flight
+    // mutation callbacks drop their results instead of applying one
+    // account's confirmed change to another account's (now empty) state.
+    // A plain reload does NOT bump this: a successful mutation always
+    // reflects server truth, so it still converges locally even when a
+    // reload raced it (and provides the close-undo snapshot).
+    int m_accountGeneration = 0;
     QString m_errorMessage;
     QString m_warningMessage;
     bool m_incomplete = false;

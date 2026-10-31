@@ -259,6 +259,7 @@ private Q_SLOTS:
     void closeIssueDoubleSendGuarded();
     void closeIssueFailureWarnsAndClearsPending();
     void mutationInFlightThenFailedReloadClearsPending();
+    void undoInFlightThenSuccessfulReloadHasNoDuplicate();
     void reopenIssueRemovesRow();
     void undoLastCloseReopensAndRestores();
     void logoutDiscardsInFlightMutation();
@@ -725,10 +726,11 @@ void IssueControllerTest::closeIssueDoubleSendGuarded()
 
 void IssueControllerTest::mutationInFlightThenFailedReloadClearsPending()
 {
-    // A reload fences in-flight mutation callbacks via the generation
-    // counter; their pending flags must be released too, or the row would
-    // stay disabled forever when the reload itself fails and keeps the
-    // old list.
+    // A reload releases in-flight mutation pending flags, but it must NOT
+    // fence a successful mutation result: success reflects server truth,
+    // so it still converges locally (row dropped, undo offered) even when
+    // the reload itself failed and kept the old list. Only logout or a
+    // new-identity sign-in fences mutations.
     FakeIssueApi api;
     api.deferUpdate = true;
     api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
@@ -747,10 +749,41 @@ void IssueControllerTest::mutationInFlightThenFailedReloadClearsPending()
     QVERIFY(!controller.model()->isIssuePending(1));
     QCOMPARE(controller.loadedCount(), 1);
     QVERIFY(!controller.errorMessage().isEmpty());
-    // The orphaned mutation result arrives late and must apply nothing:
-    // no row removal, no undo snapshot from stale success.
+    // The orphaned mutation result arrives late and must still converge:
+    // the server confirmed the close, so the row drops and undo is offered.
     api.updateQueue.append(httpUpdate("closed"));
     api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::undoInFlightThenSuccessfulReloadHasNoDuplicate()
+{
+    // Undo re-adds the reopened row on success, but a racing reload may
+    // already have fetched it (post-commit read): the late undo must patch
+    // the existing row, not append a duplicate.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.deferUpdate = true;
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    api.updateQueue.append(httpUpdate("closed"));
+    api.fireUpdates(); // close confirmed: row dropped, undo offered
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(controller.canUndoClose());
+    controller.undoLastClose(); // reopen in flight
+    // Racing reload fetches the already-reopened issue from the server.
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    api.updateQueue.append(httpUpdate("open"));
+    api.fireUpdates(); // undo confirmed: still exactly one row, undo spent
     QCOMPARE(controller.loadedCount(), 1);
     QVERIFY(!controller.canUndoClose());
 }

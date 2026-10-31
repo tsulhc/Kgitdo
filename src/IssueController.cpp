@@ -286,13 +286,15 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
     }
     const QString token = m_auth->currentAccessToken();
     const QString login = m_auth->userLogin();
-    const int generation = m_generation;
+    const int accountGeneration = m_accountGeneration;
     m_client->updateIssueState(target.owner, target.repo, target.number, closed, token,
-        [this, id, closed, isUndo, login, generation, target, targetNumber](
+        [this, id, closed, isUndo, login, accountGeneration, target, targetNumber](
             const GitHubClient::UpdateResult &result) {
-            if (generation != m_generation) {
-                // Superseded by logout, new identity, or a reload: the model
-                // was already reset, so touch nothing.
+            if (accountGeneration != m_accountGeneration) {
+                // Superseded by logout or a new-identity sign-in: the model
+                // was already reset, so apply nothing. A plain reload does
+                // NOT fence mutations: a successful result reflects server
+                // truth and still converges locally below.
                 if (isUndo) {
                     m_undoInFlight = false;
                 }
@@ -336,10 +338,18 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 Q_EMIT undoChanged();
             } else if (!closed && isUndo) {
                 // Undo reopened the issue: it belongs to the current
-                // filter again, so re-add it sorted by last activity.
+                // filter again, so restore it — unless a racing reload
+                // already fetched it (post-commit read), in which case
+                // appending would duplicate the row. Patching the state
+                // keeps the fresher server-provided fields intact.
                 Issue restored = target;
                 restored.state = QStringLiteral("open");
-                m_loaded.append(restored);
+                const int existing = loadedRow(restored.id);
+                if (existing < 0) {
+                    m_loaded.append(restored);
+                } else {
+                    m_loaded[existing].state = QStringLiteral("open");
+                }
                 std::sort(m_loaded.begin(), m_loaded.end(), [](const Issue &a, const Issue &b) {
                     if (a.updatedAt.isValid() != b.updatedAt.isValid()) {
                         return a.updatedAt.isValid();
@@ -387,6 +397,7 @@ void IssueController::clearAllState()
     // is ignored, and release the loading guard so a later sign-in can
     // reload immediately.
     ++m_generation;
+    ++m_accountGeneration; // mutations in flight belong to the old account
     setLoading(false);
     m_loaded.clear();
     m_model->setIssues({});
