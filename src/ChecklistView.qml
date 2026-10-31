@@ -101,16 +101,32 @@ ColumnLayout {
                 }
                 Controls.ComboBox {
                     Accessible.name: i18n("Repository")
-                    model: [i18n("All repositories")].concat(issueController.availableRepos)
+                    // A filter can outlive its repository: switching view or
+                    // state may drop the selected repo from availableRepos.
+                    // Keep it as an explicit last entry so the UI never claims
+                    // "All repositories" while the list stays filtered.
+                    property bool staleFilter: issueController.repoFilter.length > 0
+                        && issueController.availableRepos.indexOf(issueController.repoFilter) < 0
+                    model: staleFilter
+                        ? [i18n("All repositories")].concat(issueController.availableRepos).concat([issueController.repoFilter])
+                        : [i18n("All repositories")].concat(issueController.availableRepos)
                     currentIndex: {
                         if (issueController.repoFilter.length === 0) {
                             return 0;
                         }
                         const row = issueController.availableRepos.indexOf(issueController.repoFilter);
-                        return row < 0 ? 0 : row + 1;
+                        if (row >= 0) {
+                            return row + 1;
+                        }
+                        return count - 1;
                     }
                     onActivated: function (index) {
-                        issueController.repoFilter = index <= 0 ? "" : issueController.availableRepos[index - 1];
+                        if (index <= 0) {
+                            issueController.repoFilter = "";
+                        } else if (index - 1 < issueController.availableRepos.length) {
+                            issueController.repoFilter = issueController.availableRepos[index - 1];
+                        }
+                        // Re-selecting the stale entry leaves the filter unchanged.
                     }
                 }
             }
