@@ -301,6 +301,7 @@ private Q_SLOTS:
     void closeIssueFailureWarnsAndClearsPending();
     void mutationRateLimitFailureThenSuccessClearsCountdown();
     void mutationRateLimitSurvivesFailedFetch();
+    void mutationRateLimitSurvivesSuccessfulFetch();
     void partialLoadRateLimitSurvivesMutationSuccess();
     void overlappingMutationKeepsOtherRateOutcome();
     void mutationNonRateFailurePreservesOtherRateOutcome();
@@ -532,6 +533,40 @@ void IssueControllerTest::mutationRateLimitSurvivesFailedFetch()
     QVERIFY(controller.rateLimited());
     QCOMPARE(controller.retryAfterSecs(), 45);
     QCOMPARE(controller.loadedCount(), 1); // failed load keeps the old list
+    // The preserved owner still retires on the retry success.
+    controller.closeIssue(id);
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::mutationRateLimitSurvivesSuccessfulFetch()
+{
+    // A successful non-rate fetch must not retire a mutation-owned
+    // rate-limit outcome either: search and mutation quotas are separate,
+    // so the fetch says nothing about the mutation's server condition.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpRateLimited(45));
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    // Unrelated successful fetch: the list rebuilds, but the mutation's
+    // countdown and owner survive.
+    controller.reload();
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    QCOMPARE(controller.loadedCount(), 1);
     // The preserved owner still retires on the retry success.
     controller.closeIssue(id);
     QCOMPARE(controller.loadedCount(), 0);
