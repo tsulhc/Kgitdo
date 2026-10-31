@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-fedora:
+    name: Build / test / install (Fedora Plasma 6)
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:42
+    steps:
+      - name: Install dependencies
+        run: |
+          dnf install -y \
+            @development-tools \
+            @development-libs \
+            cmake \
+            extra-cmake-modules \
+            kf6-kirigami-devel \
+            kf6-ki18n-devel \
+            kf6-kcoreaddons-devel \
+            kf6-kiconthemes-devel \
+            kf6-qqc2-desktop-style \
+            qt6-qtbase-devel \
+            qt6-qtdeclarative-devel \
+            desktop-file-utils \
+            appstream \
+            git
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate desktop entry
+        run: desktop-file-validate data/org.kde.kgitdo.desktop
+
+      - name: Validate AppStream metadata
+        run: appstreamcli validate data/org.kde.kgitdo.metainfo.xml
+
+      - name: Configure
+        run: cmake -B build --install-prefix /tmp/kgitdo-install -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install
+        run: |
+          cmake --install build
+          test -x /tmp/kgitdo-install/bin/kgitdo
+          test -f /tmp/kgitdo-install/share/applications/org.kde.kgitdo.desktop
+
+      - name: Smoke launch (offscreen)
+        run: |
+          code=0
+          QT_QPA_PLATFORM=offscreen timeout 5 /tmp/kgitdo-install/bin/kgitdo || code=$?
+          if [ "$code" -eq 124 ]; then
+            echo "offscreen smoke: app stayed alive for 5s (QML loaded, expected timeout)"
+            exit 0
+          else
+            echo "unexpected exit code $code"
+            exit 1
+          fi
