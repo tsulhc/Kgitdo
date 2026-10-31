@@ -156,12 +156,26 @@ bool KWalletSecureStore::load(StoredTokens &out)
         return false;
     }
     bool loaded = false;
+    if (!m_backend->folderExists()) {
+        // No folder: nothing was ever persisted here, so emptiness is
+        // established even on a fresh instance. A later disabled clear may
+        // report success without claiming anything unverified.
+        m_hasPersisted = false;
+        m_backend->close();
+        return false;
+    }
     if (m_backend->selectFolder(false)) {
         QByteArray commit;
-        if (!m_backend->readBlob(QLatin1String(kCommitKey), commit)
-            || commit != QByteArray(kCommitValue)) {
+        const bool commitRead = m_backend->readBlob(QLatin1String(kCommitKey), commit);
+        if (!commitRead || commit != QByteArray(kCommitValue)) {
             // No commit marker: absent session or interrupted/rolled-back
-            // save. Never accept partial credentials as a session.
+            // save. Never accept partial credentials as a session. A
+            // successfully read non-marker value establishes that no
+            // committed session exists; a failed read teaches nothing, so
+            // the fail-closed duty stays armed.
+            if (commitRead) {
+                m_hasPersisted = false;
+            }
             m_backend->close();
             return false;
         }

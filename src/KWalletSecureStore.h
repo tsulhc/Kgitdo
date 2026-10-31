@@ -26,10 +26,15 @@ public:
 
 private:
     IWalletBackend *m_backend = nullptr;
-    // Armed when this instance may have persisted credentials — at the
-    // first save mutation attempt or when load() observes a commit marker —
-    // until a verified clear resets it. Lets clear() fail closed when the
-    // wallet service disappears: a disabled backend can no longer prove
-    // entries are gone.
-    bool m_hasPersisted = false;
+    // Unknown-unless-verified-empty: true until this instance establishes
+    // that no credentials are persisted — a verified clear, an absent
+    // folder, or a folder provably carrying no commit marker. Starts true
+    // because credentials from an earlier run may exist even if this
+    // process never saved: a disabled/unopenable wallet (or an
+    // unselectable folder) teaches nothing, so a later disabled clear must
+    // warn rather than claim success. Reset only by a verified clear (or by
+    // establishing emptiness as above); re-armed by any save attempt and by
+    // observing a commit marker, so cleanup fails closed whenever
+    // credentials may remain but removal can no longer be verified.
+    bool m_hasPersisted = true;
 };

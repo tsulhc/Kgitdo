@@ -177,7 +177,10 @@ private Q_SLOTS:
     void failedSaveArmsDisabledClearFailure();
     void loadMarkerWithUnreadableAccessArmsDisabledClear();
     void removePolicyDecisionTable();
-    void disabledBackendLoadSaveFailClearSucceeds();
+    void loadAbsentFolderEstablishesEmpty();
+    void loadWrongMarkerEstablishesEmpty();
+    void loadUnselectableFolderKeepsUnknownState();
+    void disabledBackendFreshInstanceFailsClosed();
 };
 
 void WalletStoreTest::saveLoadRoundTrip()
@@ -561,8 +564,61 @@ void WalletStoreTest::removePolicyDecisionTable()
     QVERIFY(!confirmRemoved(false, false, true, false));
 }
 
-void WalletStoreTest::disabledBackendLoadSaveFailClearSucceeds()
+void WalletStoreTest::loadAbsentFolderEstablishesEmpty()
 {
+    // Fresh instance, no folder: nothing could ever have been persisted
+    // here, so emptiness is established and a later disabled clear stays
+    // silent instead of warning about unknown state.
+    FakeBackend backend;
+    KWalletSecureStore store(nullptr, &backend);
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+    backend.enabled = false;
+    QVERIFY(store.clear());
+}
+
+void WalletStoreTest::loadWrongMarkerEstablishesEmpty()
+{
+    // Folder exists but carries no valid commit marker: a successfully read
+    // non-marker value proves no committed session exists, so a later
+    // disabled clear stays silent. Unloadable residue without a marker is
+    // harmless by construction (load() requires the marker).
+    FakeBackend backend;
+    backend.hasFolder = true;
+    backend.entries.insert(QStringLiteral("committed"), QByteArray("0"));
+    KWalletSecureStore store(nullptr, &backend);
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+    backend.enabled = false;
+    QVERIFY(store.clear());
+}
+
+void WalletStoreTest::loadUnselectableFolderKeepsUnknownState()
+{
+    // Finding regression: a fresh instance whose folder cannot be selected
+    // learns nothing — pre-existing credentials may remain — so a later
+    // disabled clear must warn. Once selection works again, clearing is
+    // verifiable and the warning clears with it.
+    FakeBackend backend;
+    backend.hasFolder = true;
+    backend.failSelect = true;
+    KWalletSecureStore store(nullptr, &backend);
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+    backend.enabled = false;
+    QVERIFY(!store.clear());
+    backend.enabled = true;
+    backend.failSelect = false;
+    QVERIFY(store.clear());
+    StoredTokens after;
+    QVERIFY(!store.load(after));
+}
+
+void WalletStoreTest::disabledBackendFreshInstanceFailsClosed()
+{
+    // A fresh instance with a disabled wallet is in the unknown state:
+    // credentials from an earlier run may remain, but removal cannot be
+    // verified, so logout must warn (with retry) rather than claim success.
     FakeBackend backend;
     backend.enabled = false;
     KWalletSecureStore store(nullptr, &backend);
@@ -570,8 +626,7 @@ void WalletStoreTest::disabledBackendLoadSaveFailClearSucceeds()
     StoredTokens loaded;
     QVERIFY(!store.load(loaded));
     QVERIFY(!store.save(makeTokens()));
-    // Service absent: nothing could have been persisted here.
-    QVERIFY(store.clear());
+    QVERIFY(!store.clear());
     QVERIFY(!backend.wasOpened);
 }
 
