@@ -247,6 +247,17 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
         || m_auth->currentAccessToken().isEmpty()) {
         return;
     }
+    // Authoritative double-send guard: the model's pending flag is visual
+    // state that fetches rebuild, so only this set can prove no PATCH is
+    // outstanding for the id. It is checked BEFORE any state mutation (the
+    // undo-in-flight flag below, the model pending flag further down): a
+    // rejected overlapping request must leave no flag behind. Entries are
+    // added just before dispatch and released when the PATCH callback of
+    // the same account completes — never by a plain reload; clearAllState
+    // wipes them on logout/account change.
+    if (m_mutationGuard.contains(id)) {
+        return; // PATCH already outstanding for this issue.
+    }
     if (isUndo && (m_undo.id == 0 || m_undo.id != id || m_undoInFlight)) {
         return; // No snapshot, stale target, or undo already in flight.
     }
@@ -285,13 +296,8 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
         target = issue;
         targetNumber = target.qualifiedNumber();
     }
-    // Authoritative double-send guard: the model's pending flag is visual
-    // state that fetches rebuild, so only this set can prove no PATCH is
-    // outstanding for the id. It is released when the PATCH callback
-    // completes or the account changes — never by a plain reload.
-    if (m_mutationGuard.contains(id)) {
-        return;
-    }
+    // The guard was checked before any state mutation above; the entry is
+    // added only now that every row guard passed and dispatch is certain.
     m_mutationGuard.insert(id);
     const QString token = m_auth->currentAccessToken();
     const QString login = m_auth->userLogin();
@@ -300,11 +306,12 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
         [this, id, closed, isUndo, login, accountGeneration, target, targetNumber](
             const GitHubClient::UpdateResult &result) {
             if (accountGeneration != m_accountGeneration) {
-                // Superseded by logout or a new-identity sign-in: the model
-                // was already reset, so apply nothing. A plain reload does
-                // NOT fence mutations: a successful result reflects server
-                // truth and still converges locally below.
-                m_mutationGuard.remove(id);
+                // Superseded by logout or a new-identity sign-in: clearAllState
+                // already wiped this callback's guard entry, and the new
+                // account may have started its own mutation for the same
+                // issue id — so remove nothing here, or the stale callback
+                // would release the new account's guard and allow a
+                // duplicate PATCH.
                 if (isUndo) {
                     m_undoInFlight = false;
                 }
@@ -327,8 +334,9 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
             if (m_auth && m_auth->userLogin() != login) {
                 // Identity changed mid-mutation: drop the result rather
                 // than mixing accounts. The new identity's reload (or the
-                // next refresh) reconverges with the server.
-                m_mutationGuard.remove(id);
+                // next refresh) reconverges with the server. The guard entry
+                // was already wiped by clearAllState and may have been
+                // re-taken by the new account, so remove nothing here.
                 return;
             }
             // Success: the server echoed the requested state.
@@ -367,6 +375,10 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
             if (confirmedInView) {
                 Issue converged = target;
                 converged.state = closed ? QStringLiteral("closed") : QStringLiteral("open");
+                // The row must be interactive: target may predate the latest
+                // fetch cycle, so never carry a stale pending flag into the
+                // list (the guard, not the flag, proves no PATCH is out).
+                converged.pending = false;
                 const int existing = loadedRow(converged.id);
                 if (existing < 0) {
                     m_loaded.append(converged);

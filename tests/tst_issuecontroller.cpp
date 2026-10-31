@@ -153,6 +153,23 @@ public:
             callback(result);
         }
     }
+
+    void fireOneUpdate()
+    {
+        // Complete only the oldest deferred PATCH: lets a test interleave a
+        // stale (fenced) callback with a newer account's live mutation.
+        if (updatePending.isEmpty()) {
+            return;
+        }
+        auto callback = updatePending.takeFirst();
+        IssueHttpResult result;
+        if (!updateQueue.isEmpty()) {
+            result = updateQueue.takeFirst();
+        } else {
+            result.transportError = QStringLiteral("no queued update response");
+        }
+        callback(result);
+    }
 };
 
 namespace
@@ -265,6 +282,8 @@ private Q_SLOTS:
     void reopenSuccessAfterViewSwitchUpsertsIntoOpenView();
     void undoSuccessInClosedViewDoesNotAddOpenRow();
     void lateUndoSuccessKeepsNewerUndo();
+    void staleCallbackDoesNotReleaseNewAccountGuard();
+    void overlappingUndoRejectedThenFailureKeepsUndoUsable();
     void reopenIssueRemovesRow();
     void undoLastCloseReopensAndRestores();
     void logoutDiscardsInFlightMutation();
@@ -818,6 +837,11 @@ void IssueControllerTest::closeSuccessAfterViewSwitchUpsertsIntoClosedView()
     QCOMPARE(controller.loadedCount(), 1);
     QCOMPARE(controller.visibleCount(), 1);
     QVERIFY(controller.canUndoClose());
+    // The upserted row is interactive, not stuck pending: reopening it
+    // dispatches a fresh PATCH.
+    QVERIFY(!controller.model()->isIssuePending(1));
+    controller.reopenIssue(rowId(controller, 0));
+    QCOMPARE(api.updateRequests.size(), 2);
 }
 
 void IssueControllerTest::reopenSuccessAfterViewSwitchUpsertsIntoOpenView()
@@ -846,6 +870,11 @@ void IssueControllerTest::reopenSuccessAfterViewSwitchUpsertsIntoOpenView()
     QCOMPARE(controller.loadedCount(), 1);
     QCOMPARE(controller.visibleCount(), 1);
     QVERIFY(!controller.canUndoClose()); // reopens offer no undo
+    // The upserted row is interactive, not stuck pending: closing it again
+    // dispatches a fresh PATCH.
+    QVERIFY(!controller.model()->isIssuePending(1));
+    controller.closeIssue(rowId(controller, 0));
+    QCOMPARE(api.updateRequests.size(), 2);
 }
 
 void IssueControllerTest::undoSuccessInClosedViewDoesNotAddOpenRow()
@@ -914,6 +943,127 @@ void IssueControllerTest::lateUndoSuccessKeepsNewerUndo()
     api.updateQueue.append(httpUpdate("open")); // B's undo
     controller.undoLastClose();
     QCOMPARE(controller.loadedCount(), 2);
+    QVERIFY(!controller.canUndoClose());
+}
+
+void IssueControllerTest::staleCallbackDoesNotReleaseNewAccountGuard()
+{
+    // Alice's close is outstanding when she signs out and bob signs in on
+    // the same controller and closes the SAME issue id. Alice's late
+    // (fenced) callback must not release bob's guard: a duplicate close for
+    // bob dispatches nothing, and bob's own callback still converges.
+    FakeIssueApi api;
+    api.deferUpdate = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    auto *network = new TinyAuthNetwork(this);
+    auto *store = new InMemorySecureStore(this);
+    StoredTokens tokens;
+    tokens.accessToken = QStringLiteral("tok-alice");
+    tokens.login = QStringLiteral("alice");
+    store->save(tokens);
+    IAuthNetwork::UserResult aliceUser;
+    aliceUser.ok = true;
+    aliceUser.login = QStringLiteral("alice");
+    network->userQueue.append(aliceUser);
+    auto *auth = new AuthSession(network, store, this);
+    auth->setClientId(QStringLiteral("cid"));
+    auth->restore();
+    QVERIFY(auth->isAuthenticated());
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.closeIssue(rowId(controller, 0)); // alice's PATCH outstanding
+    QCOMPARE(api.updateRequests.size(), 1);
+    auth->logout(); // wipes guard + list; alice's callback is now stale
+    QCOMPARE(controller.loadedCount(), 0);
+    // Bob signs in via device flow; his reload returns the same issue id.
+    IAuthNetwork::DeviceCodeResult device;
+    device.ok = true;
+    device.data.deviceCode = QStringLiteral("dev-code-2");
+    device.data.userCode = QStringLiteral("AAAA-BBBB");
+    device.data.verificationUri = QStringLiteral("https://github.com/login/device");
+    device.data.expiresInSeconds = 900;
+    device.data.intervalSeconds = 3600;
+    network->deviceQueue.append(device);
+    IAuthNetwork::TokenResult bobToken;
+    bobToken.ok = true;
+    bobToken.data.hasToken = true;
+    bobToken.data.accessToken = QStringLiteral("tok-bob");
+    bobToken.data.refreshToken = QStringLiteral("ref-bob");
+    bobToken.data.expiresInSeconds = 3600;
+    network->pollQueue.append(bobToken);
+    IAuthNetwork::UserResult bobUser;
+    bobUser.ok = true;
+    bobUser.login = QStringLiteral("bob");
+    network->userQueue.append(bobUser);
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    auth->startLogin();
+    QCOMPARE(auth->status(), AuthSession::AwaitingAuthorization);
+    auth->pollOnce();
+    QVERIFY(auth->isAuthenticated());
+    QCOMPARE(auth->userLogin(), QStringLiteral("bob"));
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.closeIssue(rowId(controller, 0)); // bob's PATCH outstanding
+    QCOMPARE(api.updateRequests.size(), 2);
+    // Alice's late success is fenced: the guard stays, so a duplicate close
+    // for bob dispatches nothing.
+    api.updateQueue.append(httpUpdate("closed")); // alice's late result
+    api.fireOneUpdate();
+    QCOMPARE(api.updateRequests.size(), 2);
+    controller.closeIssue(rowId(controller, 0)); // still guarded: nothing
+    QCOMPARE(api.updateRequests.size(), 2);
+    // Bob's own callback converges: closed leaves the Open view, undo offered.
+    api.updateQueue.append(httpUpdate("closed")); // bob's result
+    api.fireOneUpdate();
+    QCOMPARE(api.updateRequests.size(), 2);
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(controller.canUndoClose());
+    QVERIFY(controller.undoMessage().contains(QStringLiteral("o/r#7")));
+}
+
+void IssueControllerTest::overlappingUndoRejectedThenFailureKeepsUndoUsable()
+{
+    // Close A (undo offered). A regular reopen is dispatched with its PATCH
+    // deferred; clicking undo while it is outstanding is rejected WITHOUT
+    // arming the undo-in-flight flag. When the reopen FAILS, the undo offer
+    // is still usable and dispatches a fresh PATCH.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed")); // A's close
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.closeIssue(rowId(controller, 0));
+    QVERIFY(controller.canUndoClose());
+    QCOMPARE(controller.loadedCount(), 0);
+    // The reopen runs from the Closed view with a deferred PATCH.
+    api.queue.append(httpOk(pageJson({closedItemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    controller.setIssueState(IssueController::StateClosed);
+    QCOMPARE(controller.loadedCount(), 1);
+    api.deferUpdate = true;
+    controller.reopenIssue(rowId(controller, 0)); // regular reopen in flight
+    QCOMPARE(api.updateRequests.size(), 2);
+    controller.undoLastClose(); // rejected: guard held, flag untouched
+    QCOMPARE(api.updateRequests.size(), 2);
+    // The reopen fails: the undo offer survives AND still dispatches.
+    IssueHttpResult fail;
+    fail.transportError = QStringLiteral("timeout");
+    api.updateQueue.append(fail);
+    api.fireUpdates();
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.canUndoClose());
+    controller.undoLastClose();
+    QCOMPARE(api.updateRequests.size(), 3);
+    api.updateQueue.append(httpUpdate("open")); // undo succeeds
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 0); // Closed view: open row absent
     QVERIFY(!controller.canUndoClose());
 }
 
