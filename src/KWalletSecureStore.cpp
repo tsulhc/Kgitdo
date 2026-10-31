@@ -91,7 +91,13 @@ public:
         if (!m_wallet) {
             return false;
         }
-        return m_wallet->writePassword(key, value) == 0;
+        if (m_wallet->writePassword(key, value) != 0) {
+            return false;
+        }
+        // Verify rather than trust the write call: a silent non-write must
+        // not be treated as persisted (see contract above).
+        QString check;
+        return m_wallet->readPassword(key, check) == 0 && check == value;
     }
 
     bool writeBlob(const QString &key, const QByteArray &value) override
@@ -99,7 +105,11 @@ public:
         if (!m_wallet) {
             return false;
         }
-        return m_wallet->writeEntry(key, value) == 0;
+        if (m_wallet->writeEntry(key, value) != 0) {
+            return false;
+        }
+        QByteArray check;
+        return m_wallet->readEntry(key, check) == 0 && check == value;
     }
 
     bool remove(const QString &key) override
@@ -173,6 +183,10 @@ bool KWalletSecureStore::load(StoredTokens &out)
             tokens.login = login;
             out = tokens;
             loaded = true;
+            // A committed set was just read back: this instance is now
+            // responsible for credentials that may outlive a later disable,
+            // so cleanup must fail closed until a verified clear resets this.
+            m_hasPersisted = true;
         }
     }
     m_backend->close();
@@ -216,6 +230,27 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
                 m_backend->writeBlob(QLatin1String(kCommitKey), QByteArray(kCommitValue));
         }
         ok = fieldsOk && commitOk;
+        if (ok) {
+            // Verify rather than trust the backend's write reports: re-read
+            // every value and compare, so a backend that acknowledges
+            // without persisting (silent write loss) cannot produce a
+            // claimed success. Unverified saves roll back like failed ones.
+            QString accessCheck;
+            QString refreshCheck;
+            QString loginCheck;
+            QByteArray expiresCheck;
+            QByteArray commitCheck;
+            ok = m_backend->readSecret(QLatin1String(kAccessKey), accessCheck)
+                && accessCheck == tokens.accessToken
+                && m_backend->readSecret(QLatin1String(kRefreshKey), refreshCheck)
+                && refreshCheck == tokens.refreshToken
+                && m_backend->readSecret(QLatin1String(kLoginKey), loginCheck)
+                && loginCheck == tokens.login
+                && m_backend->readBlob(QLatin1String(kExpiresKey), expiresCheck)
+                && expiresCheck == QByteArray::number(tokens.accessExpiresAtSecsSinceEpoch)
+                && m_backend->readBlob(QLatin1String(kCommitKey), commitCheck)
+                && commitCheck == QByteArray(kCommitValue);
+        }
         if (!ok) {
             // Roll back partial writes: never leave mixed or half-rotated
             // credentials behind for a later launch to pick up. Removal is

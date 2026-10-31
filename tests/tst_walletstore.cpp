@@ -25,6 +25,9 @@ public:
     // Simulates a stale folder listing: these keys are reported as present
     // even after removal, mirroring a wallet whose entry list lags reads.
     QSet<QString> staleListed;
+    // Simulates silent write loss: writes report success but store nothing,
+    // mirroring a wallet API that acks without persisting.
+    bool dropWrites = false;
     QStringList removedKeys;
     bool wasOpened = false;
 
@@ -89,6 +92,9 @@ public:
         if (failingWrites.contains(key)) {
             return false;
         }
+        if (dropWrites) {
+            return true;
+        }
         entries.insert(key, value.toUtf8());
         return true;
     }
@@ -97,6 +103,9 @@ public:
     {
         if (failingWrites.contains(key)) {
             return false;
+        }
+        if (dropWrites) {
+            return true;
         }
         entries.insert(key, value);
         return true;
@@ -163,6 +172,8 @@ private Q_SLOTS:
     void clearStaleListingWithUnreadableStateReportsFailure();
     void clearAbsentKeysDespiteApiErrorsReportsSuccess();
     void clearDisabledAfterSaveReportsFailure();
+    void loadArmsDisabledClearFailure();
+    void saveSilentWriteLossReportsFailure();
     void removePolicyDecisionTable();
     void disabledBackendLoadSaveFailClearSucceeds();
 };
@@ -420,6 +431,47 @@ void WalletStoreTest::clearDisabledAfterSaveReportsFailure()
     backend.enabled = true;
     QVERIFY(store.clear());
     // The verified clear reset the persisted flag: disabling again is clean.
+    backend.enabled = false;
+    QVERIFY(store.clear());
+}
+
+void WalletStoreTest::loadArmsDisabledClearFailure()
+{
+    // Regression: a store that restored credentials at startup claimed a
+    // successful logout when the wallet was later disabled, even though the
+    // restored credentials might remain. Loading a committed session arms
+    // the same fail-closed cleanup duty as saving one.
+    FakeBackend backend;
+    {
+        KWalletSecureStore first(nullptr, &backend);
+        QVERIFY(first.save(makeTokens()));
+    }
+    // Fresh instance, as in a restarted production app: restore, then lose
+    // the wallet before logout.
+    KWalletSecureStore store(nullptr, &backend);
+    StoredTokens loaded;
+    QVERIFY(store.load(loaded));
+    QCOMPARE(loaded.accessToken, QStringLiteral("ghu_saved"));
+    backend.enabled = false;
+    QVERIFY(!store.clear());
+    backend.enabled = true;
+    QVERIFY(store.clear());
+    StoredTokens after;
+    QVERIFY(!store.load(after));
+}
+
+void WalletStoreTest::saveSilentWriteLossReportsFailure()
+{
+    // Regression: backends must verify writes by read-back. A backend that
+    // acknowledges writes without persisting them must not produce a
+    // claimed success — and such a never-verified save must not arm the
+    // disabled-clear failure either.
+    FakeBackend backend;
+    KWalletSecureStore store(nullptr, &backend);
+    backend.dropWrites = true;
+    QVERIFY(!store.save(makeTokens()));
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
     backend.enabled = false;
     QVERIFY(store.clear());
 }
