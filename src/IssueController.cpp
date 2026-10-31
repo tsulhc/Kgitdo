@@ -273,6 +273,10 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
         target.repo = m_undo.repo;
         target.number = m_undo.number;
         target.state = QStringLiteral("closed");
+        // Restore scope provenance: without it an undo landing in the
+        // Assigned/Created view would always look out of scope.
+        target.isAssignedToMe = m_undo.isAssignedToMe;
+        target.isAuthoredByMe = m_undo.isAuthoredByMe;
         targetNumber = target.qualifiedNumber();
         m_undoInFlight = true;
     } else {
@@ -311,10 +315,9 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 // account may have started its own mutation for the same
                 // issue id — so remove nothing here, or the stale callback
                 // would release the new account's guard and allow a
-                // duplicate PATCH.
-                if (isUndo) {
-                    m_undoInFlight = false;
-                }
+                // duplicate PATCH. The same holds for the undo flag: the new
+                // account owns it now, so a fenced callback must touch no
+                // current-account state at all.
                 return;
             }
             m_model->setIssuePending(id, false);
@@ -347,6 +350,8 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 m_undo.owner = target.owner;
                 m_undo.repo = target.repo;
                 m_undo.number = target.number;
+                m_undo.isAssignedToMe = target.isAssignedToMe;
+                m_undo.isAuthoredByMe = target.isAuthoredByMe;
                 m_undoMessage = QStringLiteral("Closed %1 — undo?").arg(targetNumber);
                 Q_EMIT undoChanged();
             } else if (!closed && isUndo) {

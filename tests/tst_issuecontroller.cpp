@@ -286,6 +286,9 @@ private Q_SLOTS:
     void overlappingUndoRejectedThenFailureKeepsUndoUsable();
     void closeSuccessAfterScopeSwitchOmitsOutOfScopeIssue();
     void closeSuccessAfterScopeSwitchUpsertsInScopeIssue();
+    void undoAfterScopeSwitchRestoresAssignedIssue();
+    void undoAfterScopeSwitchRestoresCreatedIssue();
+    void staleUndoCallbackDoesNotClearNewAccountUndo();
     void reopenIssueRemovesRow();
     void undoLastCloseReopensAndRestores();
     void logoutDiscardsInFlightMutation();
@@ -1362,6 +1365,168 @@ void IssueControllerTest::closeSuccessAfterScopeSwitchUpsertsInScopeIssue()
     QCOMPARE(controller.visibleCount(), 1);
     QVERIFY(controller.canUndoClose());
     QVERIFY(!controller.model()->isIssuePending(1));
+}
+
+void IssueControllerTest::undoAfterScopeSwitchRestoresAssignedIssue()
+{
+    // Close dispatched in All; the user switches scope to Assigned before
+    // the undo lands. The issue IS assigned: the undo reopen must restore
+    // it — the snapshot must carry scope provenance, not just coordinates.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({}))); // All/authored
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")}))); // All/assigned
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.model()
+                ->data(controller.model()->index(0), IssueListModel::AssignedToMeRole)
+                .toBool());
+    api.deferUpdate = true;
+    api.defer = true;
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    controller.setView(IssueController::ViewAssigned);
+    api.queue.append(httpOk(pageJson({}))); // assigned/open, pre-commit
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 0);
+    api.updateQueue.append(httpUpdate("closed"));
+    api.fireUpdates();
+    QVERIFY(controller.canUndoClose());
+    controller.undoLastClose();
+    QCOMPARE(api.updateRequests.size(), 2);
+    api.updateQueue.append(httpUpdate("open"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 1); // in scope: restored
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(!controller.canUndoClose()); // undo spent
+    QVERIFY(!controller.model()->isIssuePending(1));
+}
+
+void IssueControllerTest::undoAfterScopeSwitchRestoresCreatedIssue()
+{
+    // Mirror for the Created view with an authored-only issue.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")}))); // All/authored
+    api.queue.append(httpOk(pageJson({}))); // All/assigned
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.model()
+                ->data(controller.model()->index(0), IssueListModel::AuthoredByMeRole)
+                .toBool());
+    api.deferUpdate = true;
+    api.defer = true;
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    controller.setView(IssueController::ViewCreated);
+    api.queue.append(httpOk(pageJson({}))); // created/open, pre-commit
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 0);
+    api.updateQueue.append(httpUpdate("closed"));
+    api.fireUpdates();
+    QVERIFY(controller.canUndoClose());
+    controller.undoLastClose();
+    QCOMPARE(api.updateRequests.size(), 2);
+    api.updateQueue.append(httpUpdate("open"));
+    api.fireUpdates();
+    QCOMPARE(controller.loadedCount(), 1); // in scope: restored
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(!controller.canUndoClose());
+    QVERIFY(!controller.model()->isIssuePending(1));
+}
+
+void IssueControllerTest::staleUndoCallbackDoesNotClearNewAccountUndo()
+{
+    // Alice's close succeeds, then her undo is in flight at logout; bob
+    // signs in and starts his own undo for the same issue id. Alice's late
+    // fenced callback must touch no current-account state — bob's in-flight
+    // undo stays protected, so a further undo attempt is still rejected
+    // until bob's lands.
+    FakeIssueApi api;
+    api.deferUpdate = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "AliceIssue", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    auto *network = new TinyAuthNetwork(this);
+    auto *store = new InMemorySecureStore(this);
+    StoredTokens tokens;
+    tokens.accessToken = QStringLiteral("tok-alice");
+    tokens.refreshToken = QStringLiteral("ref-alice");
+    tokens.login = QStringLiteral("alice");
+    store->save(tokens);
+    IAuthNetwork::UserResult aliceUser;
+    aliceUser.ok = true;
+    aliceUser.login = QStringLiteral("alice");
+    network->userQueue.append(aliceUser);
+    auto *auth = new AuthSession(network, store, this);
+    auth->setClientId(QStringLiteral("cid"));
+    auth->restore();
+    QVERIFY(auth->isAuthenticated());
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    api.updateQueue.append(httpUpdate("closed")); // alice's close
+    controller.closeIssue(rowId(controller, 0)); // req 1
+    QCOMPARE(api.updateRequests.size(), 1);
+    api.fireOneUpdate(); // alice's close succeeds: undo armed
+    QVERIFY(controller.canUndoClose());
+    controller.undoLastClose(); // req 2, deferred in flight
+    QCOMPARE(api.updateRequests.size(), 2);
+    auth->logout();
+    QCOMPARE(controller.loadedCount(), 0);
+    // Bob signs in on the same controller; his list carries the same issue
+    // id, and his own close+undo go in flight. Alice's fenced undo response
+    // is queued first so fireOneUpdate lands on it.
+    api.updateQueue.append(httpUpdate("closed")); // alice's undo (fenced)
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "BobIssue", "o/b")})));
+    api.queue.append(httpOk(pageJson({})));
+    IAuthNetwork::UserResult bobUser;
+    bobUser.ok = true;
+    bobUser.login = QStringLiteral("bob");
+    network->userQueue.append(bobUser);
+    IAuthNetwork::DeviceCodeResult device;
+    device.ok = true;
+    device.data.deviceCode = QStringLiteral("dev-code-3");
+    device.data.userCode = QStringLiteral("CCCC-DDDD");
+    device.data.verificationUri = QStringLiteral("https://github.com/login/device");
+    device.data.expiresInSeconds = 900;
+    device.data.intervalSeconds = 3600;
+    network->deviceQueue.append(device);
+    IAuthNetwork::TokenResult bobToken;
+    bobToken.ok = true;
+    bobToken.data.hasToken = true;
+    bobToken.data.accessToken = QStringLiteral("tok-bob");
+    bobToken.data.refreshToken = QStringLiteral("ref-bob");
+    bobToken.data.expiresInSeconds = 3600;
+    network->pollQueue.append(bobToken);
+    auth->startLogin();
+    auth->pollOnce();
+    QVERIFY(auth->isAuthenticated());
+    QCOMPARE(auth->userLogin(), QStringLiteral("bob"));
+    QCOMPARE(controller.loadedCount(), 1);
+    api.updateQueue.append(httpUpdate("closed")); // bob's close
+    controller.closeIssue(rowId(controller, 0)); // req 3
+    QCOMPARE(api.updateRequests.size(), 3);
+    QVERIFY(controller.canUndoClose());
+    api.updateQueue.append(httpUpdate("open")); // bob's undo
+    controller.undoLastClose(); // req 4, deferred in flight
+    QCOMPARE(api.updateRequests.size(), 4);
+    QVERIFY(controller.undoInFlightForTesting());
+    // Alice's stale undo lands first and is fenced: it must not release
+    // bob's guard entry nor clear bob's in-flight undo flag.
+    api.fireOneUpdate();
+    QVERIFY(controller.undoInFlightForTesting());
+    controller.undoLastClose(); // still guarded: no 5th PATCH
+    QCOMPARE(api.updateRequests.size(), 4);
+    api.fireUpdates(); // bob's close then undo succeed
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(!controller.canUndoClose()); // bob's undo spent
 }
 
 QTEST_MAIN(IssueControllerTest)

@@ -71,6 +71,8 @@ public:
     int visibleCount() const { return m_model ? m_model->rowCount() : 0; }
     QDateTime lastRefresh() const { return m_lastRefresh; }
     bool canUndoClose() const { return m_undo.id != 0; }
+    // Test-only: QML and production code use canUndoClose().
+    bool undoInFlightForTesting() const { return m_undoInFlight; }
     QString undoMessage() const { return m_undoMessage; }
 
     void setView(int view);
@@ -150,6 +152,11 @@ private:
         QString owner;
         QString repo;
         int number = 0;
+        // Scope provenance of the closed issue: the undo reopen must
+        // converge against the CURRENT scope view, and only the snapshot
+        // knows which views the issue belongs to.
+        bool isAssignedToMe = false;
+        bool isAuthoredByMe = false;
     };
     UndoClose m_undo;
     QString m_undoMessage;
