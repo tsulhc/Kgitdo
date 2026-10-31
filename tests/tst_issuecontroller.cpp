@@ -1299,6 +1299,16 @@ void IssueControllerTest::closeSuccessAfterScopeSwitchOmitsOutOfScopeIssue()
     IssueController controller(auth, &client);
     controller.reload();
     QCOMPARE(controller.loadedCount(), 1);
+    // Pin the fixture premise for the scope gate below: this row arrived
+    // via the All/authored query, so it must be authored-only. If this
+    // ever flips, the out-of-scope expectation below is the fixture's
+    // fault, not the production gate's.
+    QVERIFY(!controller.model()
+                 ->data(controller.model()->index(0), IssueListModel::AssignedToMeRole)
+                 .toBool());
+    QVERIFY(controller.model()
+                ->data(controller.model()->index(0), IssueListModel::AuthoredByMeRole)
+                .toBool());
     api.deferUpdate = true;
     api.defer = true;
     const QString id = rowId(controller, 0);
