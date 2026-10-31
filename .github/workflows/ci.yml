@@ -22,6 +22,7 @@ jobs:
             kf6-ki18n-devel \
             kf6-kcoreaddons-devel \
             kf6-kiconthemes-devel \
+            kf6-kwallet-devel \
             kf6-qqc2-desktop-style \
             qt6-qtbase-devel \
             qt6-qtdeclarative-devel \
@@ -45,7 +46,7 @@ jobs:
         run: cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
 
       - name: Install
         run: |
