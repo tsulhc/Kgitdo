@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.kde.kgitdo</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Kgitdo</name>
+  <summary>Your GitHub Issues, your KDE to-do list</summary>
+  <description>
+    <p>
+      Kgitdo is a KDE-native to-do application that uses GitHub Issues as tasks.
+      It shows open issues assigned to you or created by you across repositories
+      in a single checklist, and lets you close and reopen them on GitHub.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.kde.kgitdo.desktop</launchable>
+  <developer>
+    <name>Kgitdo contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/tsulhc/Kgitdo</url>
+  <provides>
+    <id>org.kde.kgitdo.desktop</id>
+  </provides>
+</component>

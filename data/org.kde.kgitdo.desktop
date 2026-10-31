@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Kgitdo
+GenericName=GitHub To-do List
+Comment=Your GitHub Issues, your KDE to-do list
+Exec=kgitdo
+Icon=org.kde.kgitdo
+Type=Application
+Terminal=false
+Categories=Utility;Office;Development;
+Keywords=github;issues;todo;tasks;kde;
+StartupNotify=true
+X-GNOME-UsesNotifications=false

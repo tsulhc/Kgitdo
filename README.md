@@ -7,7 +7,7 @@
 The goal is simple: keep track of issues you created or were assigned to, across repositories, in a clean checklist that feels at home on KDE Plasma. No full Git client, no heavyweight project-management suite, and no second task database to maintain.
 
 > [!IMPORTANT]
-> **Project status: planning / pre-alpha.** This README describes the intended product and its initial scope. There is no usable application yet.
+> **Project status: early development (foundation).** This README describes the intended product and its initial scope. A native Kirigami application shell builds and runs; GitHub sign-in and the issue checklist arrive in the next milestones.
 
 ## Why Kgitdo?
 
@@ -62,7 +62,7 @@ The application should work with public repositories and with private repositori
 | Authentication | Secure GitHub authorization; platform credential storage where available |
 | Primary desktop | Linux / KDE Plasma 6 |
 
-These are architectural intentions, not an implemented or finalized stack.
+These are the implemented stack for the W0 foundation (minimal Kirigami shell); GitHub data and auth layers follow in later milestones.
 
 ## Non-goals
 
@@ -70,7 +70,43 @@ Kgitdo is **not** intended to replace GitHub Issues, GitHub Projects, a Git clie
 
 ## Development
 
-Kgitdo is at the beginning of development. There are no installation or build instructions yet because application code has not been added.
+### Build from source (Fedora KDE Plasma 6)
+
+Kgitdo 0.1 targets **Linux / KDE Plasma 6** with **Qt 6**, **KDE Frameworks 6** and **Kirigami**.
+The reference build environment is Fedora with KF6 packages. Ubuntu 24.04 LTS
+does not ship the required KF6 stack and cannot build the GUI.
+
+Install build dependencies on Fedora:
+
+```bash
+sudo dnf install @development-tools @development-libs cmake extra-cmake-modules \
+  kf6-kirigami-devel kf6-ki18n-devel kf6-kcoreaddons-devel kf6-kiconthemes-devel \
+  kf6-qqc2-desktop-style qt6-qtbase-devel qt6-qtdeclarative-devel git
+```
+
+Configure, build, test and install to your home directory:
+
+```bash
+cmake -B build --install-prefix ~/.local -DBUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+cmake --install build
+```
+
+Run the application:
+
+```bash
+~/.local/bin/kgitdo
+```
+
+Headless smoke test (no display server):
+
+```bash
+QT_QPA_PLATFORM=offscreen ~/.local/bin/kgitdo
+```
+
+The build installs `kgitdo`, the `org.kde.kgitdo.desktop` launcher entry,
+AppStream metadata and the application icon.
 
 Ideas and implementation discussions belong in [GitHub Issues](https://github.com/tsulhc/Kgitdo/issues); prefer extending existing discussions over opening duplicates.
 
