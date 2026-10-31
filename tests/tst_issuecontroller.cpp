@@ -771,6 +771,7 @@ void IssueControllerTest::secondMutationBlockedAcrossReload()
     FakeIssueApi api;
     api.deferUpdate = true;
     api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
     api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
     api.queue.append(httpOk(pageJson({})));
     GitHubClient client(&api);
