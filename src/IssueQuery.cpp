@@ -192,9 +192,11 @@ bool parseSearchPage(const QByteArray &body, QueryKind kind, SearchPage *out)
         }
         if (kind == QueryKind::Assigned) {
             issue.isAssignedToMe = true;
-        } else {
+        } else if (kind == QueryKind::Authored) {
             issue.isAuthoredByMe = true;
         }
+        // QueryKind::Unknown sets neither flag: provenance is decided by
+        // the caller (see GitHubClient flagProvenance), never by the parse.
         out->issues.append(issue);
     }
     out->ok = true;

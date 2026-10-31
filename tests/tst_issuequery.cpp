@@ -12,6 +12,7 @@ private Q_SLOTS:
     void buildEmptyLogin();
     void buildSearchUrl();
     void parseValidPageAuthored();
+    void parseUnknownKindSetsNeitherFlag();
     void parseSkipsPullRequestsAndIdless();
     void parseMalformed();
     void parseMissingItems();
@@ -116,6 +117,20 @@ void IssueQueryTest::parseValidPageAuthored()
     QVERIFY(first.updatedAt.isValid());
     QVERIFY(first.isAuthoredByMe);
     QVERIFY(!first.isAssignedToMe);
+}
+
+void IssueQueryTest::parseUnknownKindSetsNeitherFlag()
+{
+    // The fetcher parses neutrally; provenance is applied per query by the
+    // caller. Unknown must never imply assignment.
+    const QByteArray body = "{\"total_count\":1,\"incomplete_results\":false,\"items\":["
+        + itemJson(101, 7, "Fix bug", "o/r", false) + "]}";
+    IssueQuery::SearchPage page;
+    QVERIFY(IssueQuery::parseSearchPage(body, IssueQuery::QueryKind::Unknown, &page));
+    QVERIFY(page.ok);
+    QCOMPARE(page.issues.size(), 1);
+    QVERIFY(!page.issues.at(0).isAuthoredByMe);
+    QVERIFY(!page.issues.at(0).isAssignedToMe);
 }
 
 void IssueQueryTest::parseSkipsPullRequestsAndIdless()

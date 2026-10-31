@@ -93,7 +93,11 @@ GitHubClient::MappedResponse GitHubClient::mapSearchResponse(const IssueHttpResu
         return out;
     }
     IssueQuery::SearchPage page;
-    if (!IssueQuery::parseSearchPage(http.body, IssueQuery::QueryKind::Assigned, &page)) {
+    // Parse neutrally: every fetched issue would otherwise arrive flagged
+    // assigned (the old hardcoded Assigned kind), defeating the
+    // authored/assigned distinction and the scope-convergence gate.
+    // Provenance is applied per query by flagProvenance below.
+    if (!IssueQuery::parseSearchPage(http.body, IssueQuery::QueryKind::Unknown, &page)) {
         out.errorMessage = page.errorString;
         return out;
     }

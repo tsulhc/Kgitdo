@@ -104,6 +104,7 @@ class GitHubClientTest : public QObject
 private Q_SLOTS:
     void allViewMergesAndDedups();
     void assignedViewFlagsUniformly();
+    void createdViewFlagsAuthoredOnly();
     void immediateErrorWithoutRequests();
     void firstPageFailureIsError();
     void midPaginationFailureTruncates();
@@ -174,6 +175,27 @@ void GitHubClientTest::assignedViewFlagsUniformly()
     QVERIFY(api.requestedUrls.at(0).query().contains(QStringLiteral("assignee")));
     QVERIFY(api.requestedUrls.at(0).query().contains(QStringLiteral("is%3Aclosed"))
         || api.requestedUrls.at(0).query().contains(QStringLiteral("is:closed")));
+}
+
+void GitHubClientTest::createdViewFlagsAuthoredOnly()
+{
+    // Regression: the fetcher once parsed every page as Assigned, so an
+    // authored-only issue arrived misflagged as assigned and defeated the
+    // scope-convergence gate. Neutral parse + per-query provenance must
+    // leave it authored-only.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(5, 1, "Only")})));
+    GitHubClient client(&api);
+    client.fetchIssues(IssueQuery::View::Created, IssueQuery::State::Open, QStringLiteral("tok"),
+                       QStringLiteral("octocat"),
+                       [&](const GitHubClient::FetchResult &result) {
+                           QVERIFY(result.ok);
+                           QCOMPARE(result.issues.size(), 1);
+                           QVERIFY(result.issues.at(0).isAuthoredByMe);
+                           QVERIFY(!result.issues.at(0).isAssignedToMe);
+                       });
+    QCOMPARE(api.requestedUrls.size(), 1);
+    QVERIFY(api.requestedUrls.at(0).query().contains(QStringLiteral("author")));
 }
 
 void GitHubClientTest::immediateErrorWithoutRequests()

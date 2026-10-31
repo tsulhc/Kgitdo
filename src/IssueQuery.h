@@ -32,6 +32,7 @@ enum class State {
 enum class QueryKind {
     Authored, // item arrived via author:<login>
     Assigned, // item arrived via assignee:<login>
+    Unknown, // provenance not established: sets neither flag
 };
 
 // One search query string for the given view (two for View::All, in
