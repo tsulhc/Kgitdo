@@ -220,6 +220,15 @@ IssueHttpResult httpOk(const QByteArray &body)
     return result;
 }
 
+IssueHttpResult httpRateLimited(int retryAfterSecs)
+{
+    IssueHttpResult result;
+    result.httpStatus = 429;
+    result.headers.insert(QStringLiteral("retry-after"), QString::number(retryAfterSecs));
+    result.body = QByteArray("{\"message\":\"API rate limit exceeded\"}");
+    return result;
+}
+
 IssueHttpResult httpUpdate(const char *state)
 {
     IssueHttpResult result;
@@ -276,6 +285,7 @@ private Q_SLOTS:
     void unknownRepoShowsEmptyButKeepsLoaded();
     void errorPropagates();
     void unauthorizedMessage();
+    void rateLimitPropagatesWithRetryAfter();
     void partialDataWarns();
     void incompleteWarns();
     void concurrentReloadGuarded();
@@ -289,6 +299,14 @@ private Q_SLOTS:
     void closeIssueRemovesRowAndEnablesUndo();
     void closeIssueDoubleSendGuarded();
     void closeIssueFailureWarnsAndClearsPending();
+    void mutationRateLimitFailureThenSuccessClearsCountdown();
+    void mutationRateLimitSurvivesFailedFetch();
+    void mutationRateLimitSurvivesSuccessfulFetch();
+    void partialLoadRateLimitSurvivesMutationSuccess();
+    void overlappingMutationKeepsOtherRateOutcome();
+    void mutationNonRateFailurePreservesOtherRateOutcome();
+    void nonRateFailureThenSameMutationSuccessClearsOwnWarning();
+    void siblingWarningSurvivesUnrelatedMutationSuccess();
     void mutationInFlightThenFailedReloadKeepsGuard();
     void undoInFlightThenSuccessfulReloadHasNoDuplicate();
     void secondMutationBlockedAcrossReload();
@@ -436,6 +454,297 @@ void IssueControllerTest::unauthorizedMessage()
     IssueController controller(auth, &client);
     controller.reload();
     QVERIFY(controller.errorMessage().contains(QStringLiteral("sign in"), Qt::CaseInsensitive));
+}
+
+void IssueControllerTest::rateLimitPropagatesWithRetryAfter()
+{
+    // Both All-view queries hit 429 with Retry-After: the controller must
+    // surface the blocking error plus the machine-readable countdown the
+    // QML banner renders, and keep no stale issues.
+    FakeIssueApi api;
+    api.queue.append(httpRateLimited(45));
+    api.queue.append(httpRateLimited(45));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QVERIFY(!controller.loading());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    QVERIFY(!controller.errorMessage().isEmpty());
+    QCOMPARE(controller.loadedCount(), 0);
+    QCOMPARE(controller.visibleCount(), 0);
+}
+
+void IssueControllerTest::mutationRateLimitFailureThenSuccessClearsCountdown()
+{
+    // A rate-limited mutation arms the retry countdown; a later success
+    // proves the server condition over and must retire it, keeping the
+    // undo offer the success created.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpRateLimited(45));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    QCOMPARE(controller.loadedCount(), 1); // row stays on failure
+    controller.closeIssue(id); // retry allowed: failure released the guard
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.hasWarning());
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::mutationRateLimitSurvivesFailedFetch()
+{
+    // A mutation-owned rate-limit outcome must survive an unrelated
+    // non-rate fetch failure: the fetch says nothing about the
+    // mutation's server condition, so flags and owner are preserved.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpRateLimited(45));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    // Unrelated fetch failure (offline, not a rate limit): the error
+    // surfaces but the mutation's countdown and owner survive.
+    IssueHttpResult failed;
+    failed.transportError = QStringLiteral("offline");
+    api.queue.append(failed);
+    api.queue.append(failed);
+    controller.reload();
+    QVERIFY(!controller.errorMessage().isEmpty());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    QCOMPARE(controller.loadedCount(), 1); // failed load keeps the old list
+    // The preserved owner still retires on the retry success.
+    controller.closeIssue(id);
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::mutationRateLimitSurvivesSuccessfulFetch()
+{
+    // A successful non-rate fetch must not retire a mutation-owned
+    // rate-limit outcome either: search and mutation quotas are separate,
+    // so the fetch says nothing about the mutation's server condition.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpRateLimited(45));
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    // Unrelated successful fetch: the list rebuilds, but the mutation's
+    // countdown and owner survive.
+    controller.reload();
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    QCOMPARE(controller.loadedCount(), 1);
+    // The preserved owner still retires on the retry success.
+    controller.closeIssue(id);
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::partialLoadRateLimitSurvivesMutationSuccess()
+{
+    // Partial load: author query parsed, assignee query rate-limited. The
+    // list shows one issue with a rate-limit warning. A later successful
+    // close must not retire the load-owned outcome: the list is still
+    // incomplete, so the countdown stays next to the fresh undo offer.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpRateLimited(45));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.loadedCount(), 1);
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(controller.canUndoClose());
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+}
+
+void IssueControllerTest::overlappingMutationKeepsOtherRateOutcome()
+{
+    // Mutation A hits the rate limit (outcome owned by A); mutation B then
+    // succeeds. B's success must not retire A's still-relevant warning.
+    // A's own retry success retires it and moves the undo offer to A.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpRateLimited(45));
+    api.updateQueue.append(httpUpdate("closed"));
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString idA = rowId(controller, 0);
+    const QString idB = rowId(controller, 1);
+    controller.closeIssue(idA);
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.rateLimited());
+    controller.closeIssue(idB);
+    QCOMPARE(controller.loadedCount(), 1); // B converged, A kept
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    controller.closeIssue(idA); // A's own retry
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.hasWarning());
+    QVERIFY(!controller.rateLimited());
+    QVERIFY(controller.canUndoClose());
+}
+
+void IssueControllerTest::siblingWarningSurvivesUnrelatedMutationSuccess()
+{
+    // A rate-limited mutation arms the countdown with its own warning; a
+    // sibling mutation's unrelated failure replaces the message but keeps
+    // the flags; the first mutation's own retry success retires the
+    // countdown yet preserves the sibling's still-unresolved warning.
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpRateLimited(45));
+    IssueHttpResult denied;
+    denied.httpStatus = 403;
+    denied.body = QByteArray("{\"message\":\"Must have push access\"}");
+    api.updateQueue.append(denied);
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString idA = rowId(controller, 0);
+    const QString idB = rowId(controller, 1);
+    controller.closeIssue(idA); // 429: warning + countdown owned by A
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.rateLimited());
+    controller.closeIssue(idB); // 403: own message, A's countdown preserved
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("installation"),
+                                                  Qt::CaseInsensitive));
+    QVERIFY(controller.rateLimited());
+    controller.closeIssue(idA); // A's retry succeeds
+    QCOMPARE(controller.loadedCount(), 1); // A converged, B kept
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.hasWarning()); // B's 403 message survives
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("installation"),
+                                                  Qt::CaseInsensitive));
+    QVERIFY(controller.canUndoClose()); // A's snapshot moved to A
+}
+
+void IssueControllerTest::mutationNonRateFailurePreservesOtherRateOutcome()
+{
+    // Mutation A hits the rate limit (outcome owned by A); an unrelated
+    // mutation B then fails without a rate limit. B's failure updates the
+    // warning to its own message but must preserve A's countdown and
+    // ownership; A's own retry success retires the rate outcome while
+    // keeping B's still-unresolved warning (ownership applies to the
+    // warning too: one mutation's success must not retire another's).
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.updateQueue.append(httpRateLimited(45));
+    IssueHttpResult denied;
+    denied.httpStatus = 403;
+    denied.body = QByteArray("{\"message\":\"Must have push access\"}");
+    api.updateQueue.append(denied);
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString idA = rowId(controller, 0);
+    const QString idB = rowId(controller, 1);
+    controller.closeIssue(idA);
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    controller.closeIssue(idB);
+    QCOMPARE(controller.loadedCount(), 2); // both rows stay
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("installation"),
+                                                  Qt::CaseInsensitive));
+    QVERIFY(controller.rateLimited()); // A's outcome preserved
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    controller.closeIssue(idA); // A's own retry
+    QCOMPARE(controller.loadedCount(), 1); // A converged, B kept
+    // A's rate outcome retired, but B's still-unresolved warning survives
+    // A's success: resolving one mutation must not retire another's.
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.hasWarning());
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("installation"),
+                                                  Qt::CaseInsensitive));
+    QVERIFY(controller.canUndoClose()); // undo moved to A
+}
+
+void IssueControllerTest::nonRateFailureThenSameMutationSuccessClearsOwnWarning()
+{
+    // A non-rate failure (403) arms no countdown but owns the warning; the
+    // same mutation's retry success must retire its own message even though
+    // the rate gate is uninvolved (the warning retire is independent of it).
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    IssueHttpResult denied;
+    denied.httpStatus = 403;
+    denied.body = QByteArray("{\"message\":\"Must have push access\"}");
+    api.updateQueue.append(denied);
+    api.updateQueue.append(httpUpdate("closed"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QVERIFY(controller.hasWarning());
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.loadedCount(), 1); // row stays on failure
+    controller.closeIssue(id); // own retry; failure released the guard
+    QCOMPARE(controller.loadedCount(), 0);
+    QVERIFY(!controller.hasWarning());
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
+    QVERIFY(controller.canUndoClose());
 }
 
 void IssueControllerTest::partialDataWarns()
