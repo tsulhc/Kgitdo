@@ -203,6 +203,11 @@ void WalletStoreTest::saveCommitWriteFailureLeavesUnloadableState()
     QVERIFY(!store.save(makeTokens()));
     // The access token genuinely survived the failed rollback...
     QVERIFY(backend.entries.contains(QStringLiteral("accessToken")));
+    // ...yet load() must not accept it without the commit marker.
+    StoredTokens loaded;
+    QVERIFY(!store.load(loaded));
+}
+
 void WalletStoreTest::saveStaleMarkerInvalidatedBeforeFields()
 {
     // Regression: save() wrote new fields before refreshing the commit
