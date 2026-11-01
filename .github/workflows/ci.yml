@@ -112,6 +112,7 @@ jobs:
           test -f squashfs-root/usr/plugins/platforms/libqwayland.so
           test -d squashfs-root/usr/qml/org/kde/kirigami
           test -f squashfs-root/usr/qml/org/kde/desktop/qmldir
+          test -f squashfs-root/usr/share/icons/hicolor/scalable/apps/org.kde.kgitdo.svg
           payload="$PWD/squashfs-root"
           code=0
           QT_QPA_PLATFORM=offscreen timeout 5 /usr/bin/env \
