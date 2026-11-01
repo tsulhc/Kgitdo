@@ -13,9 +13,11 @@ QString clientIdFromEnvironment()
 
 QString builtinClientId()
 {
-    // Official bundled public client ID. Empty until the operator provides
-    // it; landing it is a single-constant change in this function.
-    return QString();
+    // Official bundled public client ID (GitHub App device flow).
+    // This identifier is public by design (sent in cleartext HTTPS
+    // requests); it is not a secret. KGITDO_GITHUB_CLIENT_ID still
+    // overrides it for development and testing.
+    return QStringLiteral("Iv23liV6HbrnNijBdmHN");
 }
 
 QString effectiveClientId()

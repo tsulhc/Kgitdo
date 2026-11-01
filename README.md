@@ -68,23 +68,25 @@ These are the implemented stack for the W0 foundation (minimal Kirigami shell) p
 
 Kgitdo signs in with a **GitHub App** using the device authorization flow for public desktop clients. No client secret is distributed or stored.
 
-### Obtaining a client ID (one-time setup)
+### Sign-in setup
 
-Kgitdo needs the **public client ID** of a GitHub App registered by you (or your organization). Device flow uses only this public ID — never a client secret or private key.
+Kgitdo ships with the **public client ID** of the official GitHub App, so normal use needs no registration: just start the app and sign in (see below). Device flow uses only this public ID — never a client secret or private key.
+
+To develop or test against your own GitHub App registration instead, override the bundled ID as follows (not needed for normal use):
 
 1. Open <https://github.com/settings/apps> and choose **New GitHub App**. Fill in a name and homepage URL.
 2. Under **Permissions**, grant the minimum the app needs: repository **Issues: Read and write** plus **Metadata: Read-only**. Do not add broader permissions.
 3. Enable **Device flow** in the app's settings (user authorization): Kgitdo signs in with the device authorization flow, which GitHub requires to be turned on — otherwise sign-in is rejected (`device_flow_disabled`).
 4. Create the app, then **install** it on your account (and on any organization repositories you want to track) from the app's **Install App** page. Organization installs may need an administrator's approval.
-5. Copy the **Client ID** shown on the app's settings page and export it as `KGITDO_GITHUB_CLIENT_ID` before starting Kgitdo (see step 1 below).
+5. Copy the **Client ID** shown on your app's settings page and export it as `KGITDO_GITHUB_CLIENT_ID` before starting Kgitdo — this replaces the bundled ID for that run.
 6. If sign-in reports an unknown client ID, double-check the copied value. Never paste a client secret or private key anywhere near this app.
 
 Official reference: <https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app>
 
-1. Set the public client ID and run the app:
+1. Run the app — it signs in with the bundled official client ID. Only to override the ID for development or testing against your own app registration:
 
    ```bash
-   export KGITDO_GITHUB_CLIENT_ID=<public-client-id>
+   export KGITDO_GITHUB_CLIENT_ID=<your-own-public-client-id>
    ~/.local/bin/kgitdo
    ```
 
@@ -174,12 +176,9 @@ the artifact from the GitHub Actions run, make it executable, and launch it:
 
 ```bash
 chmod +x Kgitdo-0.1.0-x86_64.AppImage
-KGITDO_GITHUB_CLIENT_ID=<public-client-id> ./Kgitdo-0.1.0-x86_64.AppImage
+./Kgitdo-0.1.0-x86_64.AppImage
 ```
 
-You must register and install a GitHub App and enable device flow as explained
-above. The client ID is public, but is deliberately not bundled because no
-production app registration has been supplied. KWallet requires a working KDE
-session and D-Bus. The AppImage packages Qt/KDE libraries but is not a
+Install the official GitHub App on your account and any organization repositories you want to track (see above); sign-in uses the bundled official client ID. To test against your own app registration instead, prefix the launch with `KGITDO_GITHUB_CLIENT_ID=<your-own-public-client-id>`. KWallet requires a working KDE session and D-Bus. The AppImage packages Qt/KDE libraries but is not a
 substitute for testing on a real Plasma desktop. No release is declared until
 login, issue changes and KWallet have passed live acceptance tests.
