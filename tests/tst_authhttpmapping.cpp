@@ -49,7 +49,7 @@ void AuthHttpMappingTest::tokenPendingOnHttp200()
 
 void AuthHttpMappingTest::tokenPendingOnHttp400ContinuesPolling()
 {
-    const QByteArray body = R"({\"error\":\"authorization_pending\"})";
+    const QByteArray body = R"({"error":"authorization_pending"})";
     const auto result = AuthHttpMapping::mapTokenResponse(400, body, true, QStringLiteral("HTTP 400"));
     QVERIFY(!result.ok);
     QCOMPARE(result.data.errorCode, QStringLiteral("authorization_pending"));
