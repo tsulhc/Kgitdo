@@ -116,7 +116,7 @@ jobs:
               -ex "set environment QT_PLUGIN_PATH $payload/usr/plugins" \
               -ex "set environment QML2_IMPORT_PATH $payload/usr/qml" \
               -ex "set environment QT_QPA_PLATFORM offscreen" \
-              -ex run -ex "thread apply all bt 16" --args "$payload/AppRun.wrapped" || true
+              -ex run -ex "thread apply all bt 16" -ex "info proc mappings" -ex "info sharedlibrary" --args "$payload/AppRun.wrapped" || true
             exit 1
           fi
           echo "Bundled AppImage payload remained alive for 5 seconds"
