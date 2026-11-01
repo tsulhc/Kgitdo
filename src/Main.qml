@@ -62,8 +62,8 @@ Kirigami.ApplicationWindow {
                     }
 
                     Controls.Label {
-                        Layout.fillWidth: true
                         textFormat: Text.PlainText
+                        Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         text: i18n("Build %1", buildRevision)
                         opacity: 0.55
