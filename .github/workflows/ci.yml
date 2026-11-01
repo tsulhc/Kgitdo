@@ -120,7 +120,7 @@ jobs:
             echo "Bundled QML top-level modules:"
             find "$payload/usr/qml" -maxdepth 3 -name qmldir | sort | head -65
             echo "Bundled Qt configuration:"
-            find "$payload/usr" -name qt.conf -exec sh -c 'echo "$1"; cat "$1"' _ {} \
+            find "$payload/usr" -name qt.conf -exec sh -c 'echo "$1"; cat "$1"' _ {} \;
             echo "AppRun wrapped binary details:"
             file "$payload/AppRun.wrapped"
             exit 1
