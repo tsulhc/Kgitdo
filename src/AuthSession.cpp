@@ -330,7 +330,7 @@ void AuthSession::scheduleAutomaticRefresh()
     }
     const qint64 delayMs = (m_accessExpiresAtSecs - nowSecs() - kExpiryLeewaySecs) * 1000;
     // Refresh one minute before expiry; cap the delay to Qt's int range.
-    m_refreshTimer->start(static_cast<int>(qBound<qint64>(1, delayMs, 2000000000)));
+    m_refreshTimer->start(static_cast<int>(qBound<qint64>(1LL, delayMs, 2000000000LL)));
 }
 
 bool AuthSession::isAccessExpired() const
