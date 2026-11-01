@@ -17,6 +17,7 @@ QNetworkRequest makeJsonPost(const QUrl &url)
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/x-www-form-urlencoded"));
     request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("User-Agent", "Kgitdo/0.1.0");
     request.setTransferTimeout(kTransferTimeoutMs);
     // Same defect class as the issue-API redirect finding: never forward
     // device-flow credentials to another origin via automatic redirects.
@@ -191,6 +192,7 @@ void QNetworkAuthTransport::fetchUserLogin(const QString &accessToken,
 {
     QNetworkRequest request(QUrl(QStringLiteral("https://api.github.com/user")));
     request.setRawHeader("Accept", "application/vnd.github+json");
+    request.setRawHeader("User-Agent", "Kgitdo/0.1.0");
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
     request.setRawHeader("Authorization", QByteArray("Bearer ") + accessToken.toUtf8());
     request.setTransferTimeout(kTransferTimeoutMs);

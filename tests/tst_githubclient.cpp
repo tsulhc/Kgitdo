@@ -422,6 +422,7 @@ void GitHubClientTest::apiRequestPinsSameOriginRedirects()
 {
     const QUrl url(QStringLiteral("https://api.github.com/search/issues?q=x"));
     const QNetworkRequest request = QNetworkIssueApi::makeApiRequest(url, QStringLiteral("tok"));
+    QCOMPARE(request.rawHeader("User-Agent"), QByteArray("Kgitdo/0.1.0"));
     QCOMPARE(request.url(), url);
     QCOMPARE(request.rawHeader("Authorization"), QByteArray("Bearer tok"));
     QCOMPARE(request.rawHeader("Accept"), QByteArray("application/vnd.github+json"));

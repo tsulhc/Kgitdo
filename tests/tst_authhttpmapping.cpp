@@ -13,6 +13,7 @@ class AuthHttpMappingTest : public QObject
 private Q_SLOTS:
     void tokenSuccessOnHttp200();
     void tokenPendingOnHttp200();
+    void tokenPendingOnHttp400ContinuesPolling();
     void tokenBadRefreshOnHttp400IsStructured();
     void tokenExpiredOnHttp400IsStructured();
     void tokenErrorBodyOnHttp500IsStructured();
@@ -44,6 +45,15 @@ void AuthHttpMappingTest::tokenPendingOnHttp200()
     QVERIFY(!r.ok);
     QCOMPARE(r.data.errorCode, QStringLiteral("authorization_pending"));
     QVERIFY(r.transportError.isEmpty());
+}
+
+void AuthHttpMappingTest::tokenPendingOnHttp400ContinuesPolling()
+{
+    const QByteArray body = R"({\"error\":\"authorization_pending\"})";
+    const auto result = AuthHttpMapping::mapTokenResponse(400, body, true, QStringLiteral("HTTP 400"));
+    QVERIFY(!result.ok);
+    QCOMPARE(result.data.errorCode, QStringLiteral("authorization_pending"));
+    QVERIFY(result.transportError.isEmpty());
 }
 
 void AuthHttpMappingTest::tokenBadRefreshOnHttp400IsStructured()

@@ -21,6 +21,7 @@ QNetworkRequest QNetworkIssueApi::makeApiRequest(const QUrl &url, const QString 
 {
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/vnd.github+json");
+    request.setRawHeader("User-Agent", "Kgitdo/0.1.0");
     request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
     request.setRawHeader("Authorization", QByteArray("Bearer ") + accessToken.toUtf8());
     // Never forward the Bearer token to another origin: only redirects that
