@@ -73,6 +73,7 @@ jobs:
       - name: Package AppImage (x86_64)
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "1" # linuxdeploy strip cannot parse Fedora ELF .relr.dyn
           QML_SOURCES_PATHS: ${{ github.workspace }}/src
         run: |
           set -eux
