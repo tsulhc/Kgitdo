@@ -1,11 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <rect x="4" y="4" width="56" height="56" rx="12" fill="#1d99f3"/>
-  <g fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="14" y="14" width="10" height="10" rx="2"/>
-    <rect x="14" y="29" width="10" height="10" rx="2"/>
-    <rect x="14" y="44" width="10" height="6" rx="2"/>
-    <line x1="29" y1="19" x2="50" y2="19"/>
-    <line x1="29" y1="34" x2="50" y2="34"/>
-    <line x1="29" y1="47" x2="44" y2="47"/>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Kgitdo</title>
+  <desc>Blue outlined task list with purple checkboxes and an orange Git branch, no background.</desc>
+
+  <!-- Page silhouette, clean blue outline -->
+  <path fill="#0785F7" d="M252 120 H621 Q643 120 660 137 L777 254 Q795 273 795 297 V730 Q795 829 706 869 Q680 881 645 881 H249 Q127 881 127 757 V245 Q127 120 252 120 Z"/>
+  <!-- Orange accent on folded page corner -->
+  <path fill="#FF8A13" d="M647 122 L786 260 L700 259 L647 207 Z"/>
+  <!-- Paper face -->
+  <path fill="#FFFFFF" d="M251 168 H606 V267 Q606 312 652 312 H746 V726 Q746 834 645 834 H251 Q176 834 176 755 V246 Q176 168 251 168 Z"/>
+  <!-- Rounded cutout on the fold -->
+  <path fill="#FFFFFF" d="M649 180 L735 267 H680 Q650 267 650 237 Z"/>
+  <!-- Purple checkboxes and dark task lines -->
+  <g fill="none" stroke="#6515D9" stroke-width="30" stroke-linejoin="round">
+    <rect x="234" y="276" width="120" height="120" rx="23"/>
+    <rect x="234" y="446" width="120" height="120" rx="23"/>
+    <rect x="234" y="616" width="120" height="120" rx="23"/>
+  </g>
+  <g fill="#293241">
+    <rect x="407" y="319" width="258" height="38" rx="19"/>
+    <rect x="407" y="489" width="222" height="38" rx="19"/>
+    <rect x="407" y="659" width="226" height="38" rx="19"/>
+  </g>
+  <!-- Git branch, drawn over page and outside it -->
+  <path d="M641 866 C660 835 705 801 711 752 C717 715 752 712 785 712 H884 M711 752 V560" fill="none" stroke="#FF8A13" stroke-width="65" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#FFFFFF" stroke="#6515D9" stroke-width="37">
+    <circle cx="641" cy="865" r="61"/>
+    <circle cx="711" cy="535" r="61"/>
+    <circle cx="884" cy="712" r="61"/>
   </g>
 </svg>
