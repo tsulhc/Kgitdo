@@ -4,6 +4,8 @@
 #include <QObject>
 #include <QTimer>
 
+class QNetworkAccessManager;
+
 #include "AuthTransport.h"
 
 // Pure mapping of an HTTP exchange to transport results, unit-tested with
@@ -26,7 +28,7 @@ class QNetworkAuthTransport : public IAuthNetwork
 {
     Q_OBJECT
 public:
-    explicit QNetworkAuthTransport(QObject *parent = nullptr);
+    explicit QNetworkAuthTransport(QObject *parent = nullptr, QNetworkAccessManager *networkManager = nullptr);
     ~QNetworkAuthTransport() override;
 
     void requestDeviceCode(const QString &clientId,
