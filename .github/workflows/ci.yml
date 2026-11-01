@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   build-fedora:
@@ -26,9 +31,13 @@ jobs:
             kf6-qqc2-desktop-style \
             qt6-qtbase-devel \
             qt6-qtdeclarative-devel \
+            qt6-qtwayland \
+            patchelf \
             desktop-file-utils \
             appstream \
-            git
+            git \
+            curl \
+            file
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,3 +76,89 @@ jobs:
             echo "unexpected exit code $code"
             exit 1
           fi
+
+      - name: Package AppImage (x86_64)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "1" # linuxdeploy strip cannot parse Fedora ELF .relr.dyn
+          PATCHELF: "/usr/bin/patchelf" # recent Fedora patchelf preserves DT_RELR
+          EXTRA_PLATFORM_PLUGINS: "libqoffscreen.so;libqwayland.so"
+        run: |
+          set -eux
+          export QML_SOURCES_PATHS="$PWD/src" # correct container path, not host github.workspace
+          mkdir -p tools dist
+          curl -fL --retry 3 -o tools/linuxdeploy-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20250213-2/linuxdeploy-x86_64.AppImage
+          curl -fL --retry 3 -o tools/linuxdeploy-plugin-qt-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x tools/*.AppImage
+          DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
+          # QQC2's org.kde.desktop style is selected dynamically by C++
+          # (QQuickStyle::setStyle), so a static QML scanner cannot discover it.
+          # Stage it before linuxdeploy to collect its plugin dependencies.
+          test -f /usr/lib64/qt6/qml/org/kde/desktop/qmldir
+          mkdir -p AppDir/usr/qml/org/kde
+          cp -a /usr/lib64/qt6/qml/org/kde/desktop AppDir/usr/qml/org/kde/
+          # linuxdeploy's bundled patchelf is too old for Fedora's DT_RELR.
+          # PATCHELF above selects the Fedora version rather than its bundled binary.
+          test "$PATCHELF" = /usr/bin/patchelf
+          "$PATCHELF" --version
+          tools/linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
+          mv Kgitdo-x86_64.AppImage dist/Kgitdo-0.1.0-x86_64.AppImage
+          chmod +x dist/Kgitdo-0.1.0-x86_64.AppImage
+          # GitHub's Fedora container does not support FUSE mounts.
+          # Inspect and run the *actual extracted AppImage payload* instead.
+          dist/Kgitdo-0.1.0-x86_64.AppImage --appimage-extract >/dev/null
+          test -f squashfs-root/usr/lib/libcrypt.so.2
+          test -f squashfs-root/usr/plugins/platforms/libqoffscreen.so
+          test -f squashfs-root/usr/plugins/platforms/libqwayland.so
+          test -d squashfs-root/usr/qml/org/kde/kirigami
+          test -f squashfs-root/usr/qml/org/kde/desktop/qmldir
+          payload="$PWD/squashfs-root"
+          code=0
+          QT_QPA_PLATFORM=offscreen timeout 5 /usr/bin/env \
+            APPDIR="$payload" \
+            LD_LIBRARY_PATH="$payload/usr/lib:${LD_LIBRARY_PATH:-}" \
+            QT_PLUGIN_PATH="$payload/usr/plugins" \
+            QML_IMPORT_PATH="$payload/usr/qml" \
+            QML2_IMPORT_PATH="$payload/usr/qml" \
+            QT_QPA_PLATFORM=offscreen \
+            QT_DEBUG_PLUGINS=1 \
+            QML_IMPORT_TRACE=1 \
+            "$payload/AppRun" || code=$?
+          if [ "$code" -ne 124 ]; then
+            echo "Extracted AppImage payload failed smoke: status $code"
+            echo "Bundled QML top-level modules:"
+            find "$payload/usr/qml" -maxdepth 3 -name qmldir | sort | head -65
+            echo "Bundled Qt configuration:"
+            find "$payload/usr" -name qt.conf -exec sh -c 'echo "$1"; cat "$1"' _ {} \;
+            echo "AppRun wrapped binary details:"
+            file "$payload/AppRun.wrapped"
+            exit 1
+          fi
+          echo "Bundled AppImage payload remained alive for 5 seconds"
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kgitdo-0.1.0-x86_64
+          path: dist/Kgitdo-0.1.0-x86_64.AppImage
+          if-no-files-found: error
+
+  publish-release:
+    # Creating a version tag is a separate operator authorization step.
+    # Never publish from a PR, normal main push, or an unverified RC.
+    if: github.ref == 'refs/tags/v0.1.0'
+    needs: build-fedora
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested AppImage
+        uses: actions/download-artifact@v4
+        with:
+          name: Kgitdo-0.1.0-x86_64
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Kgitdo-0.1.0-x86_64.AppImage
+          fail_on_unmatched_files: true
+          generate_release_notes: true
