@@ -29,6 +29,7 @@ jobs:
             kf6-qqc2-desktop-style \
             qt6-qtbase-devel \
             qt6-qtdeclarative-devel \
+            qt6-qtwayland \
             desktop-file-utils \
             appstream \
             git \
@@ -77,6 +78,7 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "1" # linuxdeploy strip cannot parse Fedora ELF .relr.dyn
+          EXTRA_PLATFORM_PLUGINS: "libqoffscreen.so;libqwayland.so"
         run: |
           set -eux
           export QML_SOURCES_PATHS="$PWD/src" # correct container path, not host github.workspace
@@ -89,32 +91,26 @@ jobs:
           find . -maxdepth 1 -type f -name '*.AppImage' -exec cp {} dist/Kgitdo-0.1.0-x86_64.AppImage \;
           test -s dist/Kgitdo-0.1.0-x86_64.AppImage
           chmod +x dist/Kgitdo-0.1.0-x86_64.AppImage
-          echo "AppDir entrypoint diagnostics:"
-          ls -l AppDir/AppRun AppDir/usr/bin/kgitdo
-          file AppDir/AppRun AppDir/usr/bin/kgitdo dist/Kgitdo-0.1.0-x86_64.AppImage
-          ls -l AppDir/AppRun.wrapped AppDir/apprun-hooks/
-          if [ -f AppDir/AppRun ]; then head -n 65 AppDir/AppRun || true; fi
-          if [ -f AppDir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh ]; then
-            sed -n '1,80p' AppDir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh
-          fi
-          echo "Unpacked AppDir smoke:"
-          unpacked_code=0
-          APPDIR="$PWD/AppDir" QT_QPA_PLATFORM=offscreen timeout 3 bash -x AppDir/AppRun || unpacked_code=$?
-          echo "Unpacked AppDir result: $unpacked_code"
-          echo "Explicit extract-and-run AppImage smoke:"
-          extract_code=0
-          QT_QPA_PLATFORM=offscreen timeout 5 dist/Kgitdo-0.1.0-x86_64.AppImage --appimage-extract-and-run || extract_code=$?
-          echo "Explicit extract-and-run result: $extract_code"
+          # GitHub's Fedora container does not support FUSE mounts.
+          # Inspect and run the *actual extracted AppImage payload* instead.
+          dist/Kgitdo-0.1.0-x86_64.AppImage --appimage-extract >/dev/null
+          test -f squashfs-root/usr/plugins/platforms/libqoffscreen.so
+          test -f squashfs-root/usr/plugins/platforms/libqwayland.so
+          test -d squashfs-root/usr/qml/org/kde/kirigami
+          payload="$PWD/squashfs-root"
           code=0
-          QT_QPA_PLATFORM=offscreen timeout 5 dist/Kgitdo-0.1.0-x86_64.AppImage || code=$?
+          APPDIR="$payload" \
+          LD_LIBRARY_PATH="$payload/usr/lib:${LD_LIBRARY_PATH:-}" \
+          QT_PLUGIN_PATH="$payload/usr/plugins" \
+          QML2_IMPORT_PATH="$payload/usr/qml" \
+          QT_QPA_PLATFORM=offscreen timeout 5 "$payload/AppRun" || code=$?
           if [ "$code" -ne 124 ]; then
-            echo "AppImage smoke failed: status $code"
-            APPIMAGE_DEBUG=1 QT_DEBUG_PLUGINS=1 QT_QPA_PLATFORM=offscreen timeout 5 dist/Kgitdo-0.1.0-x86_64.AppImage || true
+            echo "Extracted AppImage payload failed smoke: status $code"
+            exit 1
           fi
-          test "$code" -eq 124
+          echo "Bundled AppImage payload remained alive for 5 seconds"
 
       - name: Upload AppImage artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Kgitdo-0.1.0-x86_64
