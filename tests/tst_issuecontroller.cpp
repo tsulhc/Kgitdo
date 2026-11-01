@@ -272,6 +272,33 @@ AuthSession *authenticatedSession(const QString &login, QObject *parent)
     session->restore();
     return session;
 }
+// Logged-in session with a refresh token and one queued successful rotation.
+AuthSession *authenticatedRefreshingSession(QObject *parent)
+{
+    auto *network = new TinyAuthNetwork(parent);
+    auto *store = new InMemorySecureStore(parent);
+    StoredTokens tokens;
+    tokens.accessToken = QStringLiteral("tok-old");
+    tokens.refreshToken = QStringLiteral("ref-old");
+    tokens.login = QStringLiteral("octocat");
+    store->save(tokens);
+    IAuthNetwork::UserResult user;
+    user.ok = true;
+    user.login = QStringLiteral("octocat");
+    network->userQueue.append(user);
+    network->userQueue.append(user);
+    IAuthNetwork::TokenResult refresh;
+    refresh.ok = true;
+    refresh.data.hasToken = true;
+    refresh.data.accessToken = QStringLiteral("tok-new");
+    refresh.data.refreshToken = QStringLiteral("ref-new");
+    refresh.data.expiresInSeconds = 28800;
+    network->refreshQueue.append(refresh);
+    auto *session = new AuthSession(network, store, parent);
+    session->setClientId(QStringLiteral("cid"));
+    session->restore();
+    return session;
+}
 } // namespace
 
 class IssueControllerTest : public QObject
@@ -285,7 +312,10 @@ private Q_SLOTS:
     void unknownRepoShowsEmptyButKeepsLoaded();
     void errorPropagates();
     void unauthorizedMessage();
+    void unauthorizedSearchRefreshesWithoutReplay();
+    void unauthorizedMutationRefreshesWithoutReplay();
     void rateLimitPropagatesWithRetryAfter();
+    void successfulFetchClearsOnlyFetchOwnedRateLimit();
     void partialDataWarns();
     void incompleteWarns();
     void concurrentReloadGuarded();
@@ -456,6 +486,45 @@ void IssueControllerTest::unauthorizedMessage()
     QVERIFY(controller.errorMessage().contains(QStringLiteral("sign in"), Qt::CaseInsensitive));
 }
 
+void IssueControllerTest::unauthorizedSearchRefreshesWithoutReplay()
+{
+    FakeIssueApi api;
+    IssueHttpResult unauthorized;
+    unauthorized.httpStatus = 401;
+    api.queue.append(unauthorized);
+    api.queue.append(unauthorized);
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedRefreshingSession(this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QVERIFY(auth->isAuthenticated());
+    QCOMPARE(auth->currentAccessToken(), QStringLiteral("tok-new"));
+    QCOMPARE(api.requestedUrls.size(), 2);
+    QVERIFY(!controller.errorMessage().isEmpty());
+    // No unbounded 401/replay loop. The next read is a user-triggered retry.
+}
+
+void IssueControllerTest::unauthorizedMutationRefreshesWithoutReplay()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    IssueHttpResult unauthorized;
+    unauthorized.httpStatus = 401;
+    api.updateQueue.append(unauthorized);
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedRefreshingSession(this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    QVERIFY(auth->isAuthenticated());
+    QCOMPARE(auth->currentAccessToken(), QStringLiteral("tok-new"));
+    QCOMPARE(api.updateRequests.size(), 1); // No implicit second PATCH.
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.hasWarning());
+}
+
 void IssueControllerTest::rateLimitPropagatesWithRetryAfter()
 {
     // Both All-view queries hit 429 with Retry-After: the controller must
@@ -474,6 +543,25 @@ void IssueControllerTest::rateLimitPropagatesWithRetryAfter()
     QVERIFY(!controller.errorMessage().isEmpty());
     QCOMPARE(controller.loadedCount(), 0);
     QCOMPARE(controller.visibleCount(), 0);
+}
+
+void IssueControllerTest::successfulFetchClearsOnlyFetchOwnedRateLimit()
+{
+    FakeIssueApi api;
+    api.queue.append(httpRateLimited(45));
+    api.queue.append(httpRateLimited(45));
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
 }
 
 void IssueControllerTest::mutationRateLimitFailureThenSuccessClearsCountdown()

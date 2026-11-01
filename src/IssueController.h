@@ -131,6 +131,9 @@ private:
     // reflects server truth, so it still converges locally even when a
     // reload raced it (and provides the close-undo snapshot).
     int m_accountGeneration = 0;
+    // A read held during rotation resumes once the same user is authenticated.
+    // Mutations are never replayed automatically.
+    bool m_reloadAfterRefresh = false;
     QString m_errorMessage;
     QString m_warningMessage;
     bool m_incomplete = false;

@@ -210,6 +210,7 @@ private Q_SLOTS:
     void doubleStartIsIgnored();
     void cancelPreventsFurtherPoll();
     void refreshSuccessKeepsSession();
+    void nearExpiryPreventsStaleApiToken();
     void badRefreshTokenRequiresRelogin();
     void restoreValidSession();
     void restoreExpiredRefreshes();
@@ -359,6 +360,31 @@ void AuthSessionTest::refreshSuccessKeepsSession()
     StoredTokens stored;
     QVERIFY(store.load(stored));
     QCOMPARE(stored.accessToken, QStringLiteral("ghu_two"));
+}
+
+void AuthSessionTest::nearExpiryPreventsStaleApiToken()
+{
+    FakeAuthNetwork net;
+    InMemorySecureStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    auto nearExpiry = FakeAuthNetwork::makeTokenOk(QStringLiteral("ghu_old"), QStringLiteral("ghr_old"));
+    nearExpiry.data.expiresInSeconds = 30; // within the 60-second safety margin
+    net.pollQueue << nearExpiry;
+    net.userQueue << FakeAuthNetwork::makeUserOk() << FakeAuthNetwork::makeUserOk();
+    net.refreshQueue << FakeAuthNetwork::makeTokenOk(QStringLiteral("ghu_fresh"), QStringLiteral("ghr_fresh"));
+
+    session.startLogin();
+    session.pollOnce();
+    QCOMPARE(session.status(), AuthSession::Authenticated);
+    QVERIFY(!session.ensureFreshAccessToken());
+    QCOMPARE(net.refreshRequests, 1);
+    QCOMPARE(net.lastRefreshToken, QStringLiteral("ghr_old"));
+    QCOMPARE(session.status(), AuthSession::Authenticated);
+    QCOMPARE(session.currentAccessToken(), QStringLiteral("ghu_fresh"));
+    QVERIFY(session.ensureFreshAccessToken());
+    QCOMPARE(net.refreshRequests, 1);
 }
 
 void AuthSessionTest::badRefreshTokenRequiresRelogin()
