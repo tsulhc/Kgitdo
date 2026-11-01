@@ -24,6 +24,13 @@ AuthSession::AuthSession(IAuthNetwork *network, ISecureStore *secureStore, QObje
     m_pollTimer = new QTimer(this);
     m_pollTimer->setSingleShot(true);
     connect(m_pollTimer, &QTimer::timeout, this, [this]() { pollOnce(); });
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setSingleShot(true);
+    connect(m_refreshTimer, &QTimer::timeout, this, [this]() {
+        if (isAuthenticated()) {
+            refreshSession();
+        }
+    });
 }
 
 int AuthSession::deviceExpiresInSeconds() const
@@ -135,6 +142,23 @@ void AuthSession::refreshSession()
                                   });
 }
 
+bool AuthSession::ensureFreshAccessToken()
+{
+    if (!isAuthenticated()) {
+        return false;
+    }
+    if (!isAccessExpired()) {
+        return true;
+    }
+    if (m_refreshToken.isEmpty()) {
+        logout();
+        setError(QStringLiteral("Session expired. Please sign in again."));
+        return false;
+    }
+    refreshSession();
+    return false; // Never send a request while the token is being rotated.
+}
+
 void AuthSession::logout()
 {
     ++m_attemptId;
@@ -236,8 +260,14 @@ void AuthSession::setStatus(Status status)
     if (m_status == status) {
         return;
     }
+    if (m_refreshTimer && status != Authenticated) {
+        m_refreshTimer->stop();
+    }
     m_status = status;
     Q_EMIT statusChanged();
+    if (status == Authenticated) {
+        scheduleAutomaticRefresh();
+    }
     if (status == AwaitingAuthorization || status == Authenticated) {
         Q_EMIT deviceCodeChanged();
     }
@@ -290,6 +320,17 @@ void AuthSession::stopPollTimer()
     if (m_pollTimer && m_pollTimer->isActive()) {
         m_pollTimer->stop();
     }
+}
+
+void AuthSession::scheduleAutomaticRefresh()
+{
+    m_refreshTimer->stop();
+    if (m_accessExpiresAtSecs == 0 || m_refreshToken.isEmpty()) {
+        return; // Non-expiring token or no refresh capability.
+    }
+    const qint64 delayMs = (m_accessExpiresAtSecs - nowSecs() - kExpiryLeewaySecs) * 1000;
+    // Refresh one minute before expiry; cap the delay to Qt's int range.
+    m_refreshTimer->start(static_cast<int>(qBound<qint64>(1LL, delayMs, 2000000000LL)));
 }
 
 bool AuthSession::isAccessExpired() const
