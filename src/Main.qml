@@ -44,6 +44,7 @@ Kirigami.ApplicationWindow {
                     spacing: Kirigami.Units.largeSpacing
 
                     Controls.Label {
+                        textFormat: Text.PlainText
                         Layout.alignment: Qt.AlignHCenter
                         text: i18n("Kgitdo")
                         font.pointSize: 22
@@ -53,6 +54,7 @@ Kirigami.ApplicationWindow {
                     }
 
                     Controls.Label {
+                        textFormat: Text.PlainText
                         Layout.fillWidth: true
                         text: i18n("Your GitHub Issues, your KDE to-do list.")
                         horizontalAlignment: Text.AlignHCenter
@@ -61,6 +63,7 @@ Kirigami.ApplicationWindow {
 
                     // Account / status line (header-light, per plan §3.4).
                     Controls.Label {
+                        textFormat: Text.PlainText
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
@@ -93,6 +96,7 @@ Kirigami.ApplicationWindow {
                         spacing: Kirigami.Units.smallSpacing
 
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             text: i18n("Set the public GitHub App client ID via KGITDO_GITHUB_CLIENT_ID, then restart. No secret belongs in the app or repository.")
@@ -114,6 +118,7 @@ Kirigami.ApplicationWindow {
                         spacing: Kirigami.Units.smallSpacing
 
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
@@ -130,6 +135,7 @@ Kirigami.ApplicationWindow {
                             Accessible.name: i18n("GitHub device code")
                         }
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
@@ -137,6 +143,7 @@ Kirigami.ApplicationWindow {
                             opacity: 0.8
                         }
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
@@ -189,6 +196,7 @@ Kirigami.ApplicationWindow {
                         spacing: Kirigami.Units.smallSpacing
 
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
@@ -210,6 +218,7 @@ Kirigami.ApplicationWindow {
                             Accessible.name: text
                         }
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap

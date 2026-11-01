@@ -1,6 +1,7 @@
 #include "IssueController.h"
 
 #include <QSet>
+#include <QTimer>
 #include <algorithm>
 
 IssueController::IssueController(AuthSession *authSession, GitHubClient *client, QObject *parent)
@@ -35,11 +36,17 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
                 m_lastLogin.clear();
                 return;
             }
-            if (m_auth->status() == AuthSession::Authenticated
-                && m_auth->userLogin() != m_lastLogin) {
-                clearAllState();
-                m_lastLogin = m_auth->userLogin();
-                reload();
+            if (m_auth->status() == AuthSession::Authenticated) {
+                if (m_auth->userLogin() != m_lastLogin) {
+                    clearAllState();
+                    m_lastLogin = m_auth->userLogin();
+                    reload();
+                } else if (m_reloadAfterRefresh) {
+                    m_reloadAfterRefresh = false;
+                    QTimer::singleShot(0, this, [this]() { reload(); });
+                }
+            } else if (m_auth->status() == AuthSession::Failed) {
+                m_reloadAfterRefresh = false;
             }
         });
     }
@@ -87,6 +94,18 @@ void IssueController::reload()
         Q_EMIT errorMessageChanged();
         return;
     }
+    // Do not issue a request with an expired GitHub App access token.
+    m_reloadAfterRefresh = true;
+    if (!m_auth->ensureFreshAccessToken()) {
+        if (m_auth->status() == AuthSession::Refreshing) {
+            m_errorMessage = QStringLiteral("Refreshing GitHub session. Issues will reload when ready.");
+            Q_EMIT errorMessageChanged();
+        } else {
+            m_reloadAfterRefresh = false;
+        }
+        return;
+    }
+    m_reloadAfterRefresh = false;
     const IssueQuery::View view = m_view == ViewAssigned
         ? IssueQuery::View::Assigned
         : (m_view == ViewCreated ? IssueQuery::View::Created : IssueQuery::View::All);
@@ -128,6 +147,12 @@ void IssueController::reload()
                                   m_incomplete = false;
                                   m_capped = false;
                                   m_truncated = false;
+                                  if (result.unauthorized && m_auth && m_auth->isAuthenticated()
+                                      && !m_auth->pending()) {
+                                      // The query was rejected; refresh auth,
+                                      // but do not automatically replay the read.
+                                      m_auth->refreshSession();
+                                  }
                                   if (result.rateLimited) {
                                       m_rateLimited = true;
                                       m_retryAfterSecs = result.retryAfterSecs;
@@ -159,11 +184,12 @@ void IssueController::reload()
                                   // load resolves).
                                   m_rateLimitedMutationId = 0;
                               }
-                              // Else: a successful non-rate fetch says
-                              // nothing about an outcome another mutation
-                              // may own (search and mutation quotas are
-                              // separate), so existing rate flags and owner
-                              // are preserved.
+                              // Successful fetch retires its own old quota,
+                              // but never one belonging to a mutation.
+                              else if (m_rateLimitedMutationId == 0) {
+                                  m_rateLimited = false;
+                                  m_retryAfterSecs = 0;
+                              }
                               Q_EMIT outcomeChanged();
                               m_loaded = result.issues;
                               QSet<QString> repos;
@@ -188,6 +214,10 @@ void IssueController::reload()
                               // stays visibly busy until the PATCH lands.
                               for (const qlonglong guarded : m_mutationGuard) {
                                   m_model->setIssuePending(guarded, true);
+                              }
+                              if (result.unauthorized && m_auth && m_auth->isAuthenticated()
+                                  && !m_auth->pending()) {
+                                  m_auth->refreshSession(); // Partial pages may have returned 401.
                               }
                               m_lastRefresh = QDateTime::currentDateTimeUtc();
                               Q_EMIT lastRefreshChanged();
@@ -295,6 +325,13 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
     if (m_mutationGuard.contains(id)) {
         return; // PATCH already outstanding for this issue.
     }
+    if (!m_auth->ensureFreshAccessToken()) {
+        // A PATCH is never replayed automatically after token rotation.
+        m_warningMessage = QStringLiteral("Refreshing GitHub session. Retry the issue change when signed in.");
+        m_warningOwnerId = 0;
+        Q_EMIT warningChanged();
+        return;
+    }
     if (isUndo && (m_undo.id == 0 || m_undo.id != id || m_undoInFlight)) {
         return; // No snapshot, stale target, or undo already in flight.
     }
@@ -387,6 +424,10 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 // kind: a later success clears it only for the same id.
                 m_warningOwnerId = id;
                 Q_EMIT warningChanged();
+                if (result.unauthorized && m_auth && m_auth->isAuthenticated()
+                    && !m_auth->pending()) {
+                    m_auth->refreshSession(); // Never auto-replay a PATCH.
+                }
                 return;
             }
             if (m_auth && m_auth->userLogin() != login) {
@@ -521,6 +562,7 @@ void IssueController::clearAllState()
     // reload immediately.
     ++m_generation;
     ++m_accountGeneration; // mutations in flight belong to the old account
+    m_reloadAfterRefresh = false;
     m_mutationGuard.clear(); // outstanding PATCHes are fenced: their guard dies here
     setLoading(false);
     m_loaded.clear();

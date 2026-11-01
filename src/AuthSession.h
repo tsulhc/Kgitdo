@@ -78,6 +78,8 @@ public:
     Q_INVOKABLE void cancelLogin();
     Q_INVOKABLE void retry();
     Q_INVOKABLE void refreshSession();
+    // Called by C++ API clients: starts a refresh instead of using a stale token.
+    bool ensureFreshAccessToken();
     Q_INVOKABLE void logout();
     // Retries removing persisted credentials after a failed cleanup
     // (clearFailed). Clears the warning on success; keeps it otherwise.
@@ -110,6 +112,7 @@ private:
     void clearTokens();
     void beginPollTimer();
     void stopPollTimer();
+    void scheduleAutomaticRefresh();
     bool isAccessExpired() const;
     qint64 nowSecs() const;
     void persistCurrentTokens();
@@ -149,4 +152,5 @@ private:
     bool m_clearFailed = false;
     int m_attemptId = 0;
     QTimer *m_pollTimer = nullptr;
+    QTimer *m_refreshTimer = nullptr;
 };

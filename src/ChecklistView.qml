@@ -43,6 +43,7 @@ ColumnLayout {
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.smallSpacing
             Controls.Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 font.bold: true
@@ -50,6 +51,7 @@ ColumnLayout {
                 Accessible.name: text
             }
             Controls.Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 visible: authSession.volatileSession
@@ -131,6 +133,7 @@ ColumnLayout {
                 }
             }
             Controls.Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 text: i18n("%1 of %2 shown", issueController.visibleCount, issueController.loadedCount)
@@ -147,6 +150,7 @@ ColumnLayout {
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.smallSpacing
             Controls.Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 visible: issueController.errorMessage.length > 0
@@ -161,6 +165,7 @@ ColumnLayout {
                 Accessible.name: text
             }
             Controls.Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 // Server-provided retry delay for 429/rate-limit failures:
@@ -171,6 +176,7 @@ ColumnLayout {
                 Accessible.name: text
             }
             Controls.Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 visible: issueController.hasWarning
@@ -188,6 +194,7 @@ ColumnLayout {
         contentItem: RowLayout {
             spacing: Kirigami.Units.smallSpacing
             Controls.Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 text: issueController.undoMessage
@@ -215,6 +222,7 @@ ColumnLayout {
             running: true
         }
         Controls.Label {
+            textFormat: Text.PlainText
             text: i18n("Loading issues…")
             Accessible.name: text
         }
@@ -267,12 +275,14 @@ ColumnLayout {
                         Layout.fillWidth: true
                         spacing: Kirigami.Units.smallSpacing
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             text: model.title
                             Accessible.name: text
                         }
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             opacity: 0.75
@@ -295,6 +305,7 @@ ColumnLayout {
                             }
                         }
                         Controls.Label {
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             visible: model.labels !== undefined && model.labels.length > 0
@@ -321,6 +332,7 @@ ColumnLayout {
         visible: issueController.errorMessage.length === 0 && !issueController.loading && issueController.visibleCount === 0
         spacing: Kirigami.Units.smallSpacing
         Controls.Label {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
@@ -328,6 +340,7 @@ ColumnLayout {
             Accessible.name: text
         }
         Controls.Label {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
