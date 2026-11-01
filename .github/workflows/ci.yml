@@ -92,7 +92,19 @@ jobs:
           echo "AppDir entrypoint diagnostics:"
           ls -l AppDir/AppRun AppDir/usr/bin/kgitdo
           file AppDir/AppRun AppDir/usr/bin/kgitdo dist/Kgitdo-0.1.0-x86_64.AppImage
+          ls -l AppDir/AppRun.wrapped AppDir/apprun-hooks/
           if [ -f AppDir/AppRun ]; then head -n 65 AppDir/AppRun || true; fi
+          if [ -f AppDir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh ]; then
+            sed -n '1,80p' AppDir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh
+          fi
+          echo "Unpacked AppDir smoke:"
+          unpacked_code=0
+          APPDIR="$PWD/AppDir" QT_QPA_PLATFORM=offscreen timeout 3 bash -x AppDir/AppRun || unpacked_code=$?
+          echo "Unpacked AppDir result: $unpacked_code"
+          echo "Explicit extract-and-run AppImage smoke:"
+          extract_code=0
+          QT_QPA_PLATFORM=offscreen timeout 5 dist/Kgitdo-0.1.0-x86_64.AppImage --appimage-extract-and-run || extract_code=$?
+          echo "Explicit extract-and-run result: $extract_code"
           code=0
           QT_QPA_PLATFORM=offscreen timeout 5 dist/Kgitdo-0.1.0-x86_64.AppImage || code=$?
           if [ "$code" -ne 124 ]; then
