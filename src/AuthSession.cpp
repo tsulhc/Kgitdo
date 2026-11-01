@@ -628,7 +628,10 @@ QString AuthSession::friendlyPollError(const QString &code, const QString &descr
 
 void AuthSession::copyDeviceCodeToClipboard()
 {
-    if (m_userCode.isEmpty()) {
+    // Manual re-copy of the pending device code. No-op unless a code is
+    // actually awaiting authorization (matches the header contract: after
+    // authentication there is no pending code to copy).
+    if (m_status != AwaitingAuthorization || m_userCode.isEmpty()) {
         return;
     }
     m_copyHandler(m_userCode);

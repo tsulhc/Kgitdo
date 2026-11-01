@@ -156,7 +156,10 @@ Kirigami.ApplicationWindow {
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
-                            text: i18n("The code was copied to your clipboard and GitHub should have opened. If not, copy it and open GitHub manually.")
+                            // The code is also copied to the clipboard when available.
+                // If GitHub did not open, copy the code and open GitHub
+                // manually.
+                text: i18n("The code was also copied to your clipboard when available. If GitHub did not open, copy the code and open GitHub manually.")
                             opacity: 0.7
                         }
                         RowLayout {
