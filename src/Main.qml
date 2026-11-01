@@ -61,6 +61,14 @@ Kirigami.ApplicationWindow {
                         wrapMode: Text.WordWrap
                     }
 
+                    Controls.Label {
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                        horizontalAlignment: Text.AlignHCenter
+                        text: i18n("Build %1", buildRevision)
+                        opacity: 0.55
+                    }
+
                     // Account / status line (header-light, per plan §3.4).
                     Controls.Label {
                         textFormat: Text.PlainText
@@ -180,6 +188,19 @@ Kirigami.ApplicationWindow {
                                 onClicked: authSession.cancelLogin()
                                 Accessible.name: text
                             }
+                        }
+                        Controls.Label {
+                            textFormat: Text.PlainText
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: authSession.pollAttempts === 0
+                                ? i18n("First GitHub authorization check is scheduled.")
+                                : i18n("GitHub checks: %1; last result: %2 (HTTP %3)",
+                                       authSession.pollAttempts,
+                                       authSession.lastPollResult,
+                                       authSession.lastPollHttpStatus)
+                            opacity: 0.75
                         }
                         Controls.BusyIndicator {
                             Layout.alignment: Qt.AlignHCenter

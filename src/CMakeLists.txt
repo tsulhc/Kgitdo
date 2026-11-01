@@ -49,7 +49,21 @@ target_link_libraries(kgitdoissues PUBLIC
     kgitdoauth
 )
 
+# Identify the exact checkout inside each AppImage, whose version/file name
+# otherwise stays identical across rebuilds.
+execute_process(
+    COMMAND git rev-parse --short=12 HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE KGITDO_BUILD_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT KGITDO_BUILD_SHA)
+    set(KGITDO_BUILD_SHA "unknown")
+endif()
+
 add_executable(kgitdo)
+target_compile_definitions(kgitdo PRIVATE KGITDO_BUILD_SHA="\"${KGITDO_BUILD_SHA}\"")
 
 ecm_add_qml_module(kgitdo
     URI org.kde.kgitdo

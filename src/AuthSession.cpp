@@ -26,6 +26,9 @@ AuthSession::AuthSession(IAuthNetwork *network, ISecureStore *secureStore, QObje
     m_countdownTimer = new QTimer(this);
     m_countdownTimer->setInterval(1000);
     connect(m_countdownTimer, &QTimer::timeout, this, &AuthSession::deviceCodeChanged);
+    m_expiryTimer = new QTimer(this);
+    m_expiryTimer->setSingleShot(true);
+    connect(m_expiryTimer, &QTimer::timeout, this, &AuthSession::expireDeviceCode);
     m_pollTimer = new QTimer(this);
     m_pollTimer->setSingleShot(true);
     connect(m_pollTimer, &QTimer::timeout, this, [this]() { pollOnce(); });
@@ -253,6 +256,9 @@ void AuthSession::pollOnce()
     const int attempt = m_attemptId;
     const QString clientId = m_clientId;
     const QString deviceCode = m_deviceCode;
+    ++m_pollAttempts;
+    m_lastPollResult = QStringLiteral("checking");
+    Q_EMIT pollProgressChanged();
     setPending(true);
     m_network->pollAccessToken(clientId, deviceCode,
                                [this, attempt](const IAuthNetwork::TokenResult &result) {
@@ -274,6 +280,7 @@ void AuthSession::setStatus(Status status)
         m_countdownTimer->start();
     } else {
         m_countdownTimer->stop();
+        m_expiryTimer->stop();
     }
     m_status = status;
     Q_EMIT statusChanged();
@@ -310,6 +317,10 @@ void AuthSession::clearDeviceState()
     m_verificationUri.clear();
     m_deviceExpiresAt = QDateTime();
     m_pollIntervalSeconds = 5;
+    m_pollAttempts = 0;
+    m_lastPollHttpStatus = 0;
+    m_lastPollResult.clear();
+    Q_EMIT pollProgressChanged();
 }
 
 void AuthSession::clearTokens()
@@ -332,6 +343,21 @@ void AuthSession::stopPollTimer()
     if (m_pollTimer && m_pollTimer->isActive()) {
         m_pollTimer->stop();
     }
+}
+
+void AuthSession::expireDeviceCode()
+{
+    if (m_status != AwaitingAuthorization) {
+        return;
+    }
+    // The deadline is independent of polling, so a stalled HTTP request
+    // cannot leave the authorization screen waiting forever.
+    ++m_attemptId;
+    stopPollTimer();
+    clearDeviceState();
+    setPending(false);
+    setError(QStringLiteral("The sign-in code expired. Please start again."));
+    setStatus(Failed);
 }
 
 void AuthSession::scheduleAutomaticRefresh()
@@ -435,6 +461,7 @@ void AuthSession::handleDeviceCodeResult(int attemptId, const IAuthNetwork::Devi
     const int expiresIn = result.data.expiresInSeconds > 0 ? result.data.expiresInSeconds : 900;
     m_deviceExpiresAt = QDateTime::currentDateTimeUtc().addSecs(expiresIn);
     setStatus(AwaitingAuthorization);
+    m_expiryTimer->start(qMin(expiresIn, 2147483) * 1000);
     Q_EMIT deviceCodeChanged();
     beginPollTimer();
     // W8 simplified access: copy the code up front and open the
@@ -450,6 +477,19 @@ void AuthSession::handlePollResult(int attemptId, const IAuthNetwork::TokenResul
     if (attemptId != m_attemptId || m_status != AwaitingAuthorization) {
         return;
     }
+    m_lastPollHttpStatus = result.httpStatus;
+    if (result.ok && result.data.hasToken) {
+        m_lastPollResult = QStringLiteral("authorized");
+    } else if (!result.transportError.isEmpty()) {
+        m_lastPollResult = QStringLiteral("network error");
+    } else if (result.data.errorCode == QLatin1String("authorization_pending")) {
+        m_lastPollResult = QStringLiteral("authorization pending");
+    } else if (result.data.errorCode == QLatin1String("slow_down")) {
+        m_lastPollResult = QStringLiteral("polling slowed down");
+    } else {
+        m_lastPollResult = QStringLiteral("GitHub error");
+    }
+    Q_EMIT pollProgressChanged();
     if (result.ok && result.data.hasToken) {
         stopPollTimer();
         m_accessToken = result.data.accessToken;
