@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-fedora:
     name: Build / test / install (Fedora Plasma 6)
@@ -96,3 +99,23 @@ jobs:
           name: Kgitdo-0.1.0-x86_64
           path: dist/Kgitdo-0.1.0-x86_64.AppImage
           if-no-files-found: error
+
+  publish-release:
+    # Creating a version tag is a separate operator authorization step.
+    # Never publish from a PR, normal main push, or an unverified RC.
+    if: github.ref == 'refs/tags/v0.1.0'
+    needs: build-fedora
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested AppImage
+        uses: actions/download-artifact@v4
+        with:
+          name: Kgitdo-0.1.0-x86_64
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Kgitdo-0.1.0-x86_64.AppImage
+          fail_on_unmatched_files: true
+          generate_release_notes: true
