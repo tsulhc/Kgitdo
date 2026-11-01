@@ -205,6 +205,7 @@ class AuthSessionTest : public QObject
 private Q_SLOTS:
     void loginSuccessAfterPending();
     void slowDownIncreasesInterval();
+    void waitingCodeCountdownNotifiesAndStopsOnCancel();
     void expiredCodeFails();
     void accessDeniedFails();
     void doubleStartIsIgnored();
@@ -257,6 +258,24 @@ void AuthSessionTest::loginSuccessAfterPending()
     QVERIFY(store.load(stored));
     QCOMPARE(stored.accessToken, QStringLiteral("ghu_new"));
     QCOMPARE(stored.login, QStringLiteral("octocat"));
+}
+
+void AuthSessionTest::waitingCodeCountdownNotifiesAndStopsOnCancel()
+{
+    FakeAuthNetwork net;
+    InMemorySecureStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    QSignalSpy updates(&session, &AuthSession::deviceCodeChanged);
+    session.startLogin();
+    QCOMPARE(session.status(), AuthSession::AwaitingAuthorization);
+    const int initialUpdates = updates.size();
+    QVERIFY(QTest::qWaitFor([&]() { return updates.size() > initialUpdates; }, 1600));
+    session.cancelLogin();
+    const int cancelledUpdates = updates.size();
+    QTest::qWait(1100);
+    QCOMPARE(updates.size(), cancelledUpdates);
 }
 
 void AuthSessionTest::slowDownIncreasesInterval()

@@ -3,6 +3,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QUrl>
+#include <QUrlQuery>
 
 namespace DeviceFlowProtocol
 {
@@ -111,32 +112,33 @@ bool parseUserLoginResponse(const QByteArray &json, QString *loginOut, QString *
     return true;
 }
 
-QByteArray deviceCodeRequestJson(const QString &clientId)
+QByteArray deviceCodeRequestForm(const QString &clientId)
 {
-    QJsonObject obj;
-    obj.insert(QStringLiteral("client_id"), clientId);
-    // Forces an expiring user token + refresh token even if the app has
-    // expiry disabled, so refresh/session restore always works.
-    obj.insert(QStringLiteral("scope"), QStringLiteral("offline_access"));
-    return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("client_id"), clientId);
+    // Request an expiring user token + refresh token, even if optional
+    // expiration was disabled in the GitHub App registration.
+    form.addQueryItem(QStringLiteral("scope"), QStringLiteral("offline_access"));
+    return form.query(QUrl::FullyEncoded).toUtf8();
 }
 
-QByteArray tokenPollRequestJson(const QString &clientId, const QString &deviceCode)
+QByteArray tokenPollRequestForm(const QString &clientId, const QString &deviceCode)
 {
-    QJsonObject obj;
-    obj.insert(QStringLiteral("client_id"), clientId);
-    obj.insert(QStringLiteral("device_code"), deviceCode);
-    obj.insert(QStringLiteral("grant_type"), QStringLiteral("urn:ietf:params:oauth:grant-type:device_code"));
-    return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("client_id"), clientId);
+    form.addQueryItem(QStringLiteral("device_code"), deviceCode);
+    form.addQueryItem(QStringLiteral("grant_type"),
+                      QStringLiteral("urn:ietf:params:oauth:grant-type:device_code"));
+    return form.query(QUrl::FullyEncoded).toUtf8();
 }
 
-QByteArray refreshRequestJson(const QString &clientId, const QString &refreshToken)
+QByteArray refreshRequestForm(const QString &clientId, const QString &refreshToken)
 {
-    QJsonObject obj;
-    obj.insert(QStringLiteral("client_id"), clientId);
-    obj.insert(QStringLiteral("refresh_token"), refreshToken);
-    obj.insert(QStringLiteral("grant_type"), QStringLiteral("refresh_token"));
-    return QJsonDocument(obj).toJson(QJsonDocument::Compact);
+    QUrlQuery form;
+    form.addQueryItem(QStringLiteral("client_id"), clientId);
+    form.addQueryItem(QStringLiteral("refresh_token"), refreshToken);
+    form.addQueryItem(QStringLiteral("grant_type"), QStringLiteral("refresh_token"));
+    return form.query(QUrl::FullyEncoded).toUtf8();
 }
 
 bool parseOAuthErrorBody(const QByteArray &body, TokenPollData *out, QString *errorString)
