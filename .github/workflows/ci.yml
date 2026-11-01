@@ -74,9 +74,9 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "1" # linuxdeploy strip cannot parse Fedora ELF .relr.dyn
-          QML_SOURCES_PATHS: ${{ github.workspace }}/src
         run: |
           set -eux
+          export QML_SOURCES_PATHS="$PWD/src" # correct container path, not host github.workspace
           mkdir -p tools dist
           curl -fL --retry 3 -o tools/linuxdeploy-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20250213-2/linuxdeploy-x86_64.AppImage
           curl -fL --retry 3 -o tools/linuxdeploy-plugin-qt-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage
