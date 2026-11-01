@@ -148,7 +148,7 @@ void DeviceFlowProtocolTest::buildsRequestBodies()
     const QByteArray refresh = DeviceFlowProtocol::refreshRequestForm(id, refreshToken);
     const QUrlQuery refreshFields(QString::fromUtf8(refresh));
     QCOMPARE(refreshFields.queryItemValue(QStringLiteral("client_id")), id);
-    QCOMPARE(refreshFields.queryItemValue(QStringLiteral("refresh_token")), refreshToken);
+    QCOMPARE(refreshFields.queryItemValue(QStringLiteral("refresh_token"), QUrl::FullyDecoded), refreshToken);
     QCOMPARE(refreshFields.queryItemValue(QStringLiteral("grant_type")), QStringLiteral("refresh_token"));
 
     // Public desktop client: never distribute client secret or log bodies.
