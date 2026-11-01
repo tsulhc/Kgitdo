@@ -88,13 +88,16 @@ jobs:
           curl -fL --retry 3 -o tools/linuxdeploy-plugin-qt-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x tools/*.AppImage
           DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
-          tools/linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
+          # Fedora libcrypt's constructor crashes after linuxdeploy ELF rewriting.
+          # Use the host's libcrypt instead; do not ship the damaged copy.
+          tools/linuxdeploy-x86_64.AppImage --appdir AppDir --exclude-library libcrypt.so.2 --plugin qt --output appimage
           find . -maxdepth 1 -type f -name '*.AppImage' -exec cp {} dist/Kgitdo-0.1.0-x86_64.AppImage \;
           test -s dist/Kgitdo-0.1.0-x86_64.AppImage
           chmod +x dist/Kgitdo-0.1.0-x86_64.AppImage
           # GitHub's Fedora container does not support FUSE mounts.
           # Inspect and run the *actual extracted AppImage payload* instead.
           dist/Kgitdo-0.1.0-x86_64.AppImage --appimage-extract >/dev/null
+          test ! -e squashfs-root/usr/lib/libcrypt.so.2
           test -f squashfs-root/usr/plugins/platforms/libqoffscreen.so
           test -f squashfs-root/usr/plugins/platforms/libqwayland.so
           test -d squashfs-root/usr/qml/org/kde/kirigami
