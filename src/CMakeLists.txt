@@ -67,7 +67,9 @@ if(NOT KGITDO_BUILD_SHA)
 endif()
 
 add_executable(kgitdo)
-target_compile_definitions(kgitdo PRIVATE KGITDO_BUILD_SHA="\"${KGITDO_BUILD_SHA}\"")
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/BuildRevision.h.in"
+               "${CMAKE_CURRENT_BINARY_DIR}/BuildRevision.h" @ONLY)
+target_include_directories(kgitdo PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
 ecm_add_qml_module(kgitdo
     URI org.kde.kgitdo

@@ -19,9 +19,7 @@
 #include "QNetworkAuthTransport.h"
 #include "QNetworkIssueApi.h"
 
-#ifndef KGITDO_BUILD_SHA
-#define KGITDO_BUILD_SHA "unknown"
-#endif
+#include "BuildRevision.h"
 
 int main(int argc, char *argv[])
 {
