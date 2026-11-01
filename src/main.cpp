@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
     auto *network = new QNetworkAuthTransport(&app);
     auto *store = new KWalletSecureStore(&app);
     auto *authSession = new AuthSession(network, store, &app);
-    authSession->setClientId(GitHubAppConfig::clientIdFromEnvironment());
+    authSession->setClientId(GitHubAppConfig::effectiveClientId());
 
     // W2: issue reading. The controller owns no UI; W3 builds the
     // checklist view on top of its model and filter properties.

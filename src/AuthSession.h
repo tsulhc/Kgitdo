@@ -1,8 +1,14 @@
 #pragma once
 
+#include <QClipboard>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QGuiApplication>
 #include <QObject>
 #include <QTimer>
+#include <QUrl>
+
+#include <functional>
 
 #include "AuthTransport.h"
 #include "SecureStore.h"
@@ -17,6 +23,14 @@
 //  - double activation (double click) cannot start two concurrent flows;
 //  - logout clears local state; server-side revocation stays manual on
 //    github.com (see openManageInstallationsPage()).
+//
+// Simplified access (W8): a single primary button starts the flow. When the
+// device code arrives the session copies the user code to the clipboard
+// (best effort: the code stays visible for manual copy) and opens the
+// GitHub verification page automatically; the user approves there while
+// this side polls. Manual Copy/Open buttons remain for no-browser or
+// no-clipboard environments. The clipboard/browser effects are injectable
+// so unit tests assert them without touching the real desktop.
 class AuthSession : public QObject
 {
     Q_OBJECT
@@ -46,7 +60,20 @@ public:
     };
     Q_ENUM(Status)
 
+    // Clipboard copy of the device user code. Returns whether the copy was
+    // performed. Production default writes the system clipboard (when one
+    // exists); tests inject a recorder.
+    using CopyHandler = std::function<bool(const QString &text)>;
+    // Browser opening for validated github.com URLs. Mirrors
+    // QDesktopServices::openUrl (true when handled). Production default
+    // opens the URL; tests inject a recorder.
+    using OpenHandler = std::function<bool(const QUrl &url)>;
+
     explicit AuthSession(IAuthNetwork *network, ISecureStore *secureStore, QObject *parent = nullptr);
+
+    // Test seams: replace the production clipboard/browser actions with
+    // recorders. Production keeps the in-class defaults below, so main.cpp
+    // and existing call sites are untouched.
 
     Status status() const { return m_status; }
     bool isAuthenticated() const { return m_status == Authenticated; }
@@ -87,6 +114,11 @@ public:
     Q_INVOKABLE void restore();
     Q_INVOKABLE void openVerificationPage();
     Q_INVOKABLE void openManageInstallationsPage();
+    // Manual re-copy of the current device user code (waiting screen
+    // "Copy code" action). No-op while no code is pending.
+    Q_INVOKABLE void copyDeviceCodeToClipboard();
+    void setCopyHandler(CopyHandler handler) { m_copyHandler = handler; }
+    void setOpenHandler(OpenHandler handler) { m_openHandler = handler; }
 
     // Drives one poll round. The internal timer calls it in production;
     // tests call it directly for deterministic stepping.
@@ -127,11 +159,26 @@ private:
     void fetchUserAndFinish(int attemptId);
     void handleUserResult(int attemptId, const IAuthNetwork::UserResult &result, bool fromRefresh);
     static QString friendlyPollError(const QString &code, const QString &description);
-    static void openValidatedGitHubUrl(const QString &urlString);
+    // Instance method so tests can inject an OpenHandler recording the URL
+    // instead of launching a browser.
+    void openValidatedGitHubUrl(const QString &urlString);
 
     IAuthNetwork *m_network = nullptr;
     ISecureStore *m_secureStore = nullptr;
     InMemorySecureStore m_volatileStore;
+    // W8 seams: production defaults copy to the system clipboard and open
+    // the URL in the browser; tests inject recording handlers via the
+    // setters above. In-class defaults keep every existing 3-arg call site
+    // (main.cpp, tests) untouched.
+    CopyHandler m_copyHandler = [](const QString &text) {
+        QClipboard *clipboard = QGuiApplication::clipboard();
+        if (!clipboard) {
+            return false; // No clipboard: the code stays visible for copy.
+        }
+        clipboard->setText(text);
+        return true;
+    };
+    OpenHandler m_openHandler = [](const QUrl &url) { return QDesktopServices::openUrl(url); };
 
     Status m_status = SignedOut;
     bool m_pending = false;

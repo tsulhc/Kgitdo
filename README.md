@@ -88,8 +88,8 @@ Official reference: <https://docs.github.com/en/apps/creating-github-apps/authen
    ~/.local/bin/kgitdo
    ```
 
-2. Choose **Sign in with GitHub**, enter the shown code at `https://github.com/login/device`, and approve the app.
-3. The app polls at the server-provided interval, honors `slow_down` backoff, and stores the expiring access token plus refresh token in **KWallet** (`Kgitdo` folder). If the wallet is unavailable or refused, the session stays volatile in memory and the UI says so.
+2. Choose **Sign in with GitHub**. The app copies the shown verification code to your clipboard and opens `https://github.com/login/device` automatically — enter (or paste) the code there and approve the app. If the browser does not open, use the on-screen **Copy code** and **Open GitHub** buttons.
+3. The waiting screen shows the code with **Copy code**, **Open GitHub**, and **Cancel** while the app polls at the server-provided interval, honors `slow_down` backoff, and stores the expiring access token plus refresh token in **KWallet** (`Kgitdo` folder). If the wallet is unavailable or refused, the session stays volatile in memory and the UI says so.
 4. Sign-out clears local credentials and memory. If the wallet cannot be opened or entries cannot be removed (e.g. locked wallet), sign-out still ends the session but warns that saved credentials may remain — a **Retry removing saved credentials** button stays visible until the cleanup succeeds. Entry removal is verified by delisting and read-back and a commit marker keeps interrupted saves unloadable, so a half-written session is never resurrected. Sign-out does not revoke the authorization on github.com; use **Manage GitHub App installations** (`https://github.com/settings/installations`) to adjust installations or revoke access.
 
 Limits: a GitHub App token can only access repositories where the app is **installed** and you have access. Organization installs may need admin approval. The app requests an expiring token (`offline_access`) so refresh works even when expiry is optional on the registration.

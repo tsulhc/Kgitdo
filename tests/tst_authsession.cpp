@@ -225,6 +225,10 @@ private Q_SLOTS:
     void retryClearWhileFailingKeepsWarning();
     void revokedSessionWithUnremovableWalletWarns();
     void badRefreshWithUnremovableWalletWarns();
+    void deviceCodeIsAutoCopiedToClipboard();
+    void verificationPageIsAutoOpened();
+    void manualCopyRecopiesCurrentCode();
+    void failingOpenerFallsBackToManualAction();
 };
 
 void AuthSessionTest::loginSuccessAfterPending()
@@ -666,6 +670,91 @@ void AuthSessionTest::badRefreshWithUnremovableWalletWarns()
     QVERIFY(session.clearFailed());
     QVERIFY(session.errorMessage().contains(QStringLiteral("sign in"), Qt::CaseInsensitive));
     QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed"), Qt::CaseInsensitive));
+}
+
+void AuthSessionTest::deviceCodeIsAutoCopiedToClipboard()
+{
+    FakeAuthNetwork net;
+    InMemorySecureStore store;
+    AuthSession session(&net, &store);
+    QString copied;
+    session.setCopyHandler([&copied](const QString &text) {
+        copied = text;
+        return true;
+    });
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+
+    session.startLogin();
+
+    QCOMPARE(session.status(), AuthSession::AwaitingAuthorization);
+    QCOMPARE(copied, QStringLiteral("WDJB-MJHT"));
+}
+
+void AuthSessionTest::verificationPageIsAutoOpened()
+{
+    FakeAuthNetwork net;
+    InMemorySecureStore store;
+    AuthSession session(&net, &store);
+    QList<QUrl> opened;
+    session.setOpenHandler([&opened](const QUrl &url) {
+        opened.append(url);
+        return true;
+    });
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+
+    session.startLogin();
+
+    QCOMPARE(session.status(), AuthSession::AwaitingAuthorization);
+    QCOMPARE(opened.size(), 1);
+    QCOMPARE(opened.first(), QUrl(QStringLiteral("https://github.com/login/device")));
+}
+
+void AuthSessionTest::manualCopyRecopiesCurrentCode()
+{
+    FakeAuthNetwork net;
+    InMemorySecureStore store;
+    AuthSession session(&net, &store);
+    QString copied;
+    session.setCopyHandler([&copied](const QString &text) {
+        copied = text;
+        return true;
+    });
+    // No code pending: manual copy is a no-op and touches nothing.
+    session.copyDeviceCodeToClipboard();
+    QVERIFY(copied.isEmpty());
+
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    session.startLogin();
+    QCOMPARE(session.status(), AuthSession::AwaitingAuthorization);
+
+    copied.clear();
+    session.copyDeviceCodeToClipboard();
+    QCOMPARE(copied, QStringLiteral("WDJB-MJHT"));
+}
+
+void AuthSessionTest::failingOpenerFallsBackToManualAction()
+{
+    FakeAuthNetwork net;
+    InMemorySecureStore store;
+    AuthSession session(&net, &store);
+    QList<QUrl> attempted;
+    session.setOpenHandler([&attempted](const QUrl &url) {
+        attempted.append(url);
+        return false; // e.g. no browser available: best-effort only
+    });
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+
+    session.startLogin();
+
+    // The waiting state stays fully usable: the code is shown and the
+    // manual Copy/Open actions remain available.
+    QCOMPARE(session.status(), AuthSession::AwaitingAuthorization);
+    QCOMPARE(session.userCode(), QStringLiteral("WDJB-MJHT"));
+    QCOMPARE(attempted.size(), 1);
 }
 
 QTEST_MAIN(AuthSessionTest)
