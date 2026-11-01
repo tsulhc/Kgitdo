@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));
     engine.rootContext()->setContextProperty(QStringLiteral("authSession"), authSession);
-    engine.rootContext()->setContextProperty(QStringLiteral("buildRevision"), QStringLiteral(KGITDO_BUILD_SHA));
+    engine.rootContext()->setContextProperty(QStringLiteral("buildRevision"), QString::fromLatin1(KGITDO_BUILD_SHA));
     engine.rootContext()->setContextProperty(QStringLiteral("issueController"), issueController);
     engine.rootContext()->setContextProperty(QStringLiteral("manageInstallationsUrl"),
                                              GitHubAppConfig::manageInstallationsUrl());
