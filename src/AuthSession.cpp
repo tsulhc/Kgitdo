@@ -23,6 +23,9 @@ AuthSession::AuthSession(IAuthNetwork *network, ISecureStore *secureStore, QObje
     , m_network(network)
     , m_secureStore(secureStore)
 {
+    m_countdownTimer = new QTimer(this);
+    m_countdownTimer->setInterval(1000);
+    connect(m_countdownTimer, &QTimer::timeout, this, &AuthSession::deviceCodeChanged);
     m_pollTimer = new QTimer(this);
     m_pollTimer->setSingleShot(true);
     connect(m_pollTimer, &QTimer::timeout, this, [this]() { pollOnce(); });
@@ -264,6 +267,13 @@ void AuthSession::setStatus(Status status)
     }
     if (m_refreshTimer && status != Authenticated) {
         m_refreshTimer->stop();
+    }
+    // deviceExpiresInSeconds is time-derived: notify QML every second
+    // while authorization is pending instead of displaying a frozen timer.
+    if (status == AwaitingAuthorization) {
+        m_countdownTimer->start();
+    } else {
+        m_countdownTimer->stop();
     }
     m_status = status;
     Q_EMIT statusChanged();

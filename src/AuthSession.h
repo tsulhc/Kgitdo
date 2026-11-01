@@ -200,4 +200,5 @@ private:
     int m_attemptId = 0;
     QTimer *m_pollTimer = nullptr;
     QTimer *m_refreshTimer = nullptr;
+    QTimer *m_countdownTimer = nullptr;
 };
