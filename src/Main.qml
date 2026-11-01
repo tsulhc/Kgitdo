@@ -151,12 +151,28 @@ Kirigami.ApplicationWindow {
                             text: i18n("Code expires in %1 seconds", authSession.deviceExpiresInSeconds)
                             opacity: 0.7
                         }
+                        Controls.Label {
+                            textFormat: Text.PlainText
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            // The code is also copied to the clipboard when available.
+                // If GitHub did not open, copy the code and open GitHub
+                // manually.
+                text: i18n("The code was also copied to your clipboard when available. If GitHub did not open, copy the code and open GitHub manually.")
+                            opacity: 0.7
+                        }
                         RowLayout {
                             Layout.alignment: Qt.AlignHCenter
                             spacing: Kirigami.Units.smallSpacing
                             Controls.Button {
-                                text: i18n("Open browser")
+                                text: i18n("Open GitHub")
                                 onClicked: authSession.openVerificationPage()
+                                Accessible.name: text
+                            }
+                            Controls.Button {
+                                text: i18n("Copy code")
+                                onClicked: authSession.copyDeviceCodeToClipboard()
                                 Accessible.name: text
                             }
                             Controls.Button {

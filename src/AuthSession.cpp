@@ -1,6 +1,8 @@
 #include "AuthSession.h"
 
+#include <QClipboard>
 #include <QDesktopServices>
+#include <QGuiApplication>
 #include <QUrl>
 
 #include "DeviceFlowProtocol.h"
@@ -425,6 +427,11 @@ void AuthSession::handleDeviceCodeResult(int attemptId, const IAuthNetwork::Devi
     setStatus(AwaitingAuthorization);
     Q_EMIT deviceCodeChanged();
     beginPollTimer();
+    // W8 simplified access: copy the code up front and open the
+    // verification page automatically. Both are best-effort — the waiting
+    // screen always offers manual Copy code / Open GitHub actions.
+    copyDeviceCodeToClipboard();
+    openVerificationPage();
     // Keep pending true while polling: buttons use it for double-click guard.
 }
 
@@ -619,10 +626,21 @@ QString AuthSession::friendlyPollError(const QString &code, const QString &descr
     return QStringLiteral("Sign-in failed. Please retry.");
 }
 
+void AuthSession::copyDeviceCodeToClipboard()
+{
+    // Manual re-copy of the pending device code. No-op unless a code is
+    // actually awaiting authorization (matches the header contract: after
+    // authentication there is no pending code to copy).
+    if (m_status != AwaitingAuthorization || m_userCode.isEmpty()) {
+        return;
+    }
+    m_copyHandler(m_userCode);
+}
+
 void AuthSession::openValidatedGitHubUrl(const QString &urlString)
 {
     if (!DeviceFlowProtocol::isAllowedExternalGitHubUrl(urlString)) {
         return;
     }
-    QDesktopServices::openUrl(QUrl(urlString));
+    m_openHandler(QUrl(urlString));
 }
