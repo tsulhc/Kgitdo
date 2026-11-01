@@ -89,11 +89,20 @@ jobs:
           find . -maxdepth 1 -type f -name '*.AppImage' -exec cp {} dist/Kgitdo-0.1.0-x86_64.AppImage \;
           test -s dist/Kgitdo-0.1.0-x86_64.AppImage
           chmod +x dist/Kgitdo-0.1.0-x86_64.AppImage
+          echo "AppDir entrypoint diagnostics:"
+          ls -l AppDir/AppRun AppDir/usr/bin/kgitdo
+          file AppDir/AppRun AppDir/usr/bin/kgitdo dist/Kgitdo-0.1.0-x86_64.AppImage
+          if [ -f AppDir/AppRun ]; then head -n 65 AppDir/AppRun || true; fi
           code=0
           QT_QPA_PLATFORM=offscreen timeout 5 dist/Kgitdo-0.1.0-x86_64.AppImage || code=$?
+          if [ "$code" -ne 124 ]; then
+            echo "AppImage smoke failed: status $code"
+            APPIMAGE_DEBUG=1 QT_DEBUG_PLUGINS=1 QT_QPA_PLATFORM=offscreen timeout 5 dist/Kgitdo-0.1.0-x86_64.AppImage || true
+          fi
           test "$code" -eq 124
 
       - name: Upload AppImage artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Kgitdo-0.1.0-x86_64
