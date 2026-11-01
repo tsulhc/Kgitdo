@@ -30,6 +30,7 @@ jobs:
             qt6-qtbase-devel \
             qt6-qtdeclarative-devel \
             qt6-qtwayland \
+            gdb \
             desktop-file-utils \
             appstream \
             git \
@@ -106,6 +107,14 @@ jobs:
           QT_QPA_PLATFORM=offscreen timeout 5 "$payload/AppRun" || code=$?
           if [ "$code" -ne 124 ]; then
             echo "Extracted AppImage payload failed smoke: status $code"
+            # Debug the bundled binary with the same runtime environment;
+            # retain logs in CI without publishing credentials.
+            APPDIR="$payload" \
+            LD_LIBRARY_PATH="$payload/usr/lib:${LD_LIBRARY_PATH:-}" \
+            QT_PLUGIN_PATH="$payload/usr/plugins" \
+            QML2_IMPORT_PATH="$payload/usr/qml" \
+            QT_QPA_PLATFORM=offscreen \
+            gdb --batch --quiet -ex run -ex "thread apply all bt 16" --args "$payload/AppRun.wrapped" || true
             exit 1
           fi
           echo "Bundled AppImage payload remained alive for 5 seconds"
