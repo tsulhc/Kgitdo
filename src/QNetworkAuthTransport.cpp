@@ -119,14 +119,16 @@ IAuthNetwork::DeviceCodeResult mapDeviceCodeResponse(int httpStatus, const QByte
 class QNetworkAuthTransport::Private
 {
 public:
-    QNetworkAccessManager nam;
+    QNetworkAccessManager *nam = nullptr;
 };
 
-QNetworkAuthTransport::QNetworkAuthTransport(QObject *parent)
+QNetworkAuthTransport::QNetworkAuthTransport(QObject *parent, QNetworkAccessManager *networkManager)
     : IAuthNetwork(parent)
     , d(new Private)
 {
-    d->nam.setParent(this);
+    // Production owns its manager; tests may inject a fake manager to exercise
+    // actual QNetworkReply callbacks without touching live GitHub or secrets.
+    d->nam = networkManager ? networkManager : new QNetworkAccessManager(this);
 }
 
 QNetworkAuthTransport::~QNetworkAuthTransport()
@@ -138,7 +140,7 @@ void QNetworkAuthTransport::requestDeviceCode(const QString &clientId,
                                              std::function<void(DeviceCodeResult)> callback)
 {
     QNetworkRequest request = makeJsonPost(QUrl(QStringLiteral("https://github.com/login/device/code")));
-    QNetworkReply *reply = d->nam.post(request, DeviceFlowProtocol::deviceCodeRequestForm(clientId));
+    QNetworkReply *reply = d->nam->post(request, DeviceFlowProtocol::deviceCodeRequestForm(clientId));
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
         const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray body = reply->readAll();
@@ -156,7 +158,7 @@ void QNetworkAuthTransport::pollAccessToken(const QString &clientId, const QStri
 {
     QNetworkRequest request = makeJsonPost(QUrl(QStringLiteral("https://github.com/login/oauth/access_token")));
     QNetworkReply *reply =
-        d->nam.post(request, DeviceFlowProtocol::tokenPollRequestForm(clientId, deviceCode));
+        d->nam->post(request, DeviceFlowProtocol::tokenPollRequestForm(clientId, deviceCode));
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
         const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray body = reply->readAll();
@@ -174,7 +176,7 @@ void QNetworkAuthTransport::refreshAccessToken(const QString &clientId, const QS
 {
     QNetworkRequest request = makeJsonPost(QUrl(QStringLiteral("https://github.com/login/oauth/access_token")));
     QNetworkReply *reply =
-        d->nam.post(request, DeviceFlowProtocol::refreshRequestForm(clientId, refreshToken));
+        d->nam->post(request, DeviceFlowProtocol::refreshRequestForm(clientId, refreshToken));
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
         const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray body = reply->readAll();
@@ -199,7 +201,7 @@ void QNetworkAuthTransport::fetchUserLogin(const QString &accessToken,
     // The Bearer token must never be forwarded to another origin.
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::SameOriginRedirectPolicy);
-    QNetworkReply *reply = d->nam.get(request);
+    QNetworkReply *reply = d->nam->get(request);
     connect(reply, &QNetworkReply::finished, this, [reply, callback]() {
         UserResult result;
         result.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();

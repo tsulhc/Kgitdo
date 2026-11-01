@@ -206,6 +206,8 @@ private Q_SLOTS:
     void loginSuccessAfterPending();
     void slowDownIncreasesInterval();
     void waitingCodeCountdownNotifiesAndStopsOnCancel();
+    void pollingProgressReportsOnlySafeStatuses();
+    void pendingAuthorizationExpiresWithoutWaitingForPoll();
     void expiredCodeFails();
     void accessDeniedFails();
     void doubleStartIsIgnored();
@@ -276,6 +278,47 @@ void AuthSessionTest::waitingCodeCountdownNotifiesAndStopsOnCancel()
     const int cancelledUpdates = updates.size();
     QTest::qWait(1100);
     QCOMPARE(updates.size(), cancelledUpdates);
+}
+
+void AuthSessionTest::pollingProgressReportsOnlySafeStatuses()
+{
+    FakeAuthNetwork net;
+    InMemorySecureStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makePollPending()
+                  << FakeAuthNetwork::makePollSlowDown();
+    session.startLogin();
+    QCOMPARE(session.pollAttempts(), 0);
+    QSignalSpy progress(&session, &AuthSession::pollProgressChanged);
+    session.pollOnce();
+    QCOMPARE(session.pollAttempts(), 1);
+    QCOMPARE(session.lastPollResult(), QStringLiteral("authorization pending"));
+    session.pollOnce();
+    QCOMPARE(session.pollAttempts(), 2);
+    QCOMPARE(session.lastPollResult(), QStringLiteral("polling slowed down"));
+    QVERIFY(progress.size() >= 4);
+    session.cancelLogin();
+    QCOMPARE(session.pollAttempts(), 0);
+    QVERIFY(session.lastPollResult().isEmpty());
+}
+
+void AuthSessionTest::pendingAuthorizationExpiresWithoutWaitingForPoll()
+{
+    FakeAuthNetwork net;
+    InMemorySecureStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    auto device = FakeAuthNetwork::makeDeviceOk();
+    device.data.expiresInSeconds = 1;
+    device.data.intervalSeconds = 10;
+    net.deviceQueue << device;
+    session.startLogin();
+    QCOMPARE(session.status(), AuthSession::AwaitingAuthorization);
+    QTRY_COMPARE_WITH_TIMEOUT(session.status(), AuthSession::Failed, 2500);
+    QCOMPARE(net.pollRequests, 0);
+    QVERIFY(session.errorMessage().contains(QStringLiteral("expired")));
 }
 
 void AuthSessionTest::slowDownIncreasesInterval()

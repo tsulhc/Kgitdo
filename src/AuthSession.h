@@ -42,6 +42,9 @@ class AuthSession : public QObject
     Q_PROPERTY(QString verificationUri READ verificationUri NOTIFY deviceCodeChanged)
     Q_PROPERTY(int deviceExpiresInSeconds READ deviceExpiresInSeconds NOTIFY deviceCodeChanged)
     Q_PROPERTY(int pollIntervalSeconds READ pollIntervalSeconds NOTIFY pollIntervalChanged)
+    Q_PROPERTY(int pollAttempts READ pollAttempts NOTIFY pollProgressChanged)
+    Q_PROPERTY(int lastPollHttpStatus READ lastPollHttpStatus NOTIFY pollProgressChanged)
+    Q_PROPERTY(QString lastPollResult READ lastPollResult NOTIFY pollProgressChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool clientIdConfigured READ clientIdConfigured NOTIFY clientIdChanged)
     Q_PROPERTY(bool volatileSession READ isVolatileSession NOTIFY volatileSessionChanged)
@@ -83,6 +86,9 @@ public:
     QString verificationUri() const { return m_verificationUri; }
     int deviceExpiresInSeconds() const;
     int pollIntervalSeconds() const { return m_pollIntervalSeconds; }
+    int pollAttempts() const { return m_pollAttempts; }
+    int lastPollHttpStatus() const { return m_lastPollHttpStatus; }
+    QString lastPollResult() const { return m_lastPollResult; }
     QString errorMessage() const { return m_errorMessage; }
     QString clientId() const { return m_clientId; }
     bool clientIdConfigured() const { return !m_clientId.isEmpty(); }
@@ -130,6 +136,7 @@ Q_SIGNALS:
     void userLoginChanged();
     void deviceCodeChanged();
     void pollIntervalChanged();
+    void pollProgressChanged();
     void errorMessageChanged();
     void clientIdChanged();
     void volatileSessionChanged();
@@ -144,6 +151,7 @@ private:
     void clearTokens();
     void beginPollTimer();
     void stopPollTimer();
+    void expireDeviceCode();
     void scheduleAutomaticRefresh();
     bool isAccessExpired() const;
     qint64 nowSecs() const;
@@ -194,6 +202,9 @@ private:
     QString m_verificationUri;
     QDateTime m_deviceExpiresAt;
     int m_pollIntervalSeconds = 5;
+    int m_pollAttempts = 0;
+    int m_lastPollHttpStatus = 0;
+    QString m_lastPollResult;
 
     bool m_volatileSession = false;
     bool m_clearFailed = false;
@@ -201,4 +212,5 @@ private:
     QTimer *m_pollTimer = nullptr;
     QTimer *m_refreshTimer = nullptr;
     QTimer *m_countdownTimer = nullptr;
+    QTimer *m_expiryTimer = nullptr;
 };

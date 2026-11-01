@@ -22,6 +22,14 @@ target_link_libraries(tst_authsession PRIVATE
 add_test(NAME tst_authsession COMMAND tst_authsession)
 set_tests_properties(tst_authsession PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(tst_authtransport tst_authtransport.cpp)
+target_link_libraries(tst_authtransport PRIVATE
+    kgitdoauth
+    Qt6::Test
+)
+add_test(NAME tst_authtransport COMMAND tst_authtransport)
+set_tests_properties(tst_authtransport PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(tst_authhttpmapping tst_authhttpmapping.cpp)
 target_link_libraries(tst_authhttpmapping PRIVATE
     kgitdoauth
