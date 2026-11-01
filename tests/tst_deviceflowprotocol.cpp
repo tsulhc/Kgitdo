@@ -1,4 +1,5 @@
 #include <QtTest/QtTest>
+#include <QUrlQuery>
 
 #include "DeviceFlowProtocol.h"
 
@@ -124,17 +125,37 @@ void DeviceFlowProtocolTest::rejectsUserWithoutLogin()
 
 void DeviceFlowProtocolTest::buildsRequestBodies()
 {
-    const QByteArray device = DeviceFlowProtocol::deviceCodeRequestJson(QStringLiteral("cid"));
-    QVERIFY(device.contains("cid"));
-    QVERIFY(device.contains("offline_access"));
-    const QByteArray poll = DeviceFlowProtocol::tokenPollRequestJson(QStringLiteral("cid"), QStringLiteral("dev"));
-    QVERIFY(poll.contains("urn:ietf:params:oauth:grant-type:device_code"));
-    const QByteArray refresh = DeviceFlowProtocol::refreshRequestJson(QStringLiteral("cid"), QStringLiteral("ref"));
-    QVERIFY(refresh.contains("refresh_token"));
-    // No secret is ever embedded by the public client.
-    QVERIFY(!device.contains("client_secret"));
-    QVERIFY(!poll.contains("client_secret"));
-    QVERIFY(!refresh.contains("client_secret"));
+    // Match the form-encoded token endpoint contract. A mock with only
+    // synthetic JSON responses would not catch an incorrect POST encoding.
+    const QString id = QStringLiteral("cid+&= ä");
+    const QString code = QStringLiteral("dev:+/&=");
+    const QString refreshToken = QStringLiteral("ghr_+&=:%");
+
+    const QByteArray device = DeviceFlowProtocol::deviceCodeRequestForm(id);
+    QVERIFY(!device.startsWith('{'));
+    QVERIFY(device.contains("client_id="));
+    QCOMPARE(QUrlQuery(QString::fromUtf8(device)).queryItemValue(QStringLiteral("client_id")), id);
+    QCOMPARE(QUrlQuery(QString::fromUtf8(device)).queryItemValue(QStringLiteral("scope")),
+             QStringLiteral("offline_access"));
+
+    const QByteArray poll = DeviceFlowProtocol::tokenPollRequestForm(id, code);
+    const QUrlQuery pollFields(QString::fromUtf8(poll));
+    QCOMPARE(pollFields.queryItemValue(QStringLiteral("client_id")), id);
+    QCOMPARE(pollFields.queryItemValue(QStringLiteral("device_code")), code);
+    QCOMPARE(pollFields.queryItemValue(QStringLiteral("grant_type")),
+             QStringLiteral("urn:ietf:params:oauth:grant-type:device_code"));
+
+    const QByteArray refresh = DeviceFlowProtocol::refreshRequestForm(id, refreshToken);
+    const QUrlQuery refreshFields(QString::fromUtf8(refresh));
+    QCOMPARE(refreshFields.queryItemValue(QStringLiteral("client_id")), id);
+    QCOMPARE(refreshFields.queryItemValue(QStringLiteral("refresh_token")), refreshToken);
+    QCOMPARE(refreshFields.queryItemValue(QStringLiteral("grant_type")), QStringLiteral("refresh_token"));
+
+    // Public desktop client: never distribute client secret or log bodies.
+    for (const QByteArray &body : {device, poll, refresh}) {
+        QVERIFY(!body.contains("client_secret"));
+        QVERIFY(!body.contains('\n'));
+    }
 }
 
 void DeviceFlowProtocolTest::classifiesErrors()

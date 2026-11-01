@@ -46,10 +46,12 @@ bool parseTokenPollResponse(const QByteArray &json, TokenPollData *out, QString 
 // Parse GET /user JSON response (minimal: login field).
 bool parseUserLoginResponse(const QByteArray &json, QString *loginOut, QString *errorString);
 
-// Request bodies (JSON, sent with Accept: application/json).
-QByteArray deviceCodeRequestJson(const QString &clientId);
-QByteArray tokenPollRequestJson(const QString &clientId, const QString &deviceCode);
-QByteArray refreshRequestJson(const QString &clientId, const QString &refreshToken);
+// OAuth device/refresh requests use form-encoded POST bodies; JSON is
+// requested as the *response* format with Accept: application/json.
+// Never place authorization codes or refresh tokens in URL query strings.
+QByteArray deviceCodeRequestForm(const QString &clientId);
+QByteArray tokenPollRequestForm(const QString &clientId, const QString &deviceCode);
+QByteArray refreshRequestForm(const QString &clientId, const QString &refreshToken);
 
 // Parse an OAuth-style {"error": "...", "error_description": "..."} body.
 // True only for structured error objects (no token present); used when an
