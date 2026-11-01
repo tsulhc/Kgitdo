@@ -286,6 +286,7 @@ private Q_SLOTS:
     void errorPropagates();
     void unauthorizedMessage();
     void rateLimitPropagatesWithRetryAfter();
+    void successfulFetchClearsOnlyFetchOwnedRateLimit();
     void partialDataWarns();
     void incompleteWarns();
     void concurrentReloadGuarded();
@@ -474,6 +475,25 @@ void IssueControllerTest::rateLimitPropagatesWithRetryAfter()
     QVERIFY(!controller.errorMessage().isEmpty());
     QCOMPARE(controller.loadedCount(), 0);
     QCOMPARE(controller.visibleCount(), 0);
+}
+
+void IssueControllerTest::successfulFetchClearsOnlyFetchOwnedRateLimit()
+{
+    FakeIssueApi api;
+    api.queue.append(httpRateLimited(45));
+    api.queue.append(httpRateLimited(45));
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QVERIFY(controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 45);
+    controller.reload();
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(!controller.rateLimited());
+    QCOMPARE(controller.retryAfterSecs(), 0);
 }
 
 void IssueControllerTest::mutationRateLimitFailureThenSuccessClearsCountdown()

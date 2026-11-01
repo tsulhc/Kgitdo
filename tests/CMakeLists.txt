@@ -69,3 +69,8 @@ target_link_libraries(tst_issuecontroller PRIVATE
 )
 add_test(NAME tst_issuecontroller COMMAND tst_issuecontroller)
 set_tests_properties(tst_issuecontroller PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(tst_qmlsecurity tst_qmlsecurity.cpp)
+target_link_libraries(tst_qmlsecurity PRIVATE Qt6::Test)
+target_compile_definitions(tst_qmlsecurity PRIVATE KGITDO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME tst_qmlsecurity COMMAND tst_qmlsecurity)

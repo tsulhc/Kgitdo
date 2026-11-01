@@ -28,7 +28,9 @@ jobs:
             qt6-qtdeclarative-devel \
             desktop-file-utils \
             appstream \
-            git
+            git \
+            curl \
+            file
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,3 +69,29 @@ jobs:
             echo "unexpected exit code $code"
             exit 1
           fi
+
+      - name: Package AppImage (x86_64)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          QML_SOURCES_PATHS: ${{ github.workspace }}/src
+        run: |
+          set -eux
+          mkdir -p tools dist
+          curl -fL --retry 3 -o tools/linuxdeploy-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20250213-2/linuxdeploy-x86_64.AppImage
+          curl -fL --retry 3 -o tools/linuxdeploy-plugin-qt-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x tools/*.AppImage
+          DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
+          tools/linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
+          find . -maxdepth 1 -type f -name '*.AppImage' -exec cp {} dist/Kgitdo-0.1.0-x86_64.AppImage \;
+          test -s dist/Kgitdo-0.1.0-x86_64.AppImage
+          chmod +x dist/Kgitdo-0.1.0-x86_64.AppImage
+          code=0
+          QT_QPA_PLATFORM=offscreen timeout 5 dist/Kgitdo-0.1.0-x86_64.AppImage || code=$?
+          test "$code" -eq 124
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kgitdo-0.1.0-x86_64
+          path: dist/Kgitdo-0.1.0-x86_64.AppImage
+          if-no-files-found: error

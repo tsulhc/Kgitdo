@@ -166,3 +166,20 @@ Ideas and implementation discussions belong in [GitHub Issues](https://github.co
 ## License
 
 Kgitdo is licensed under the [MIT License](LICENSE).
+
+### AppImage (x86_64)
+
+Successful CI runs produce an `Kgitdo-0.1.0-x86_64.AppImage` artifact. Download
+the artifact from the GitHub Actions run, make it executable, and launch it:
+
+```bash
+chmod +x Kgitdo-0.1.0-x86_64.AppImage
+KGITDO_GITHUB_CLIENT_ID=<public-client-id> ./Kgitdo-0.1.0-x86_64.AppImage
+```
+
+You must register and install a GitHub App and enable device flow as explained
+above. The client ID is public, but is deliberately not bundled because no
+production app registration has been supplied. KWallet requires a working KDE
+session and D-Bus. The AppImage packages Qt/KDE libraries but is not a
+substitute for testing on a real Plasma desktop. No release is declared until
+login, issue changes and KWallet have passed live acceptance tests.
