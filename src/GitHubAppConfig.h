@@ -12,8 +12,8 @@
 namespace GitHubAppConfig
 {
 QString clientIdFromEnvironment();
-// Bundled official public client ID (empty until the operator provides it;
-// landing it is a single-constant change, no logic change).
+// Bundled official public client ID (operator-provided official
+// registration; always non-empty in release builds).
 QString builtinClientId();
 // Effective ID: environment override when set, otherwise the bundled one.
 QString effectiveClientId();

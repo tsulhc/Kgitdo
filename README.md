@@ -72,6 +72,12 @@ Kgitdo signs in with a **GitHub App** using the device authorization flow for pu
 
 Kgitdo ships with the **public client ID** of the official GitHub App, so normal use needs no registration: just start the app and sign in (see below). Device flow uses only this public ID — never a client secret or private key.
 
+#### Install the official app
+
+Before signing in, install the official Kgitdo GitHub App on your account (and on any organization repositories you want to track) from the app's **Install App** page — Kgitdo can only see repositories where the app is installed. Organization installs may need an administrator's approval.
+
+#### Override for development
+
 To develop or test against your own GitHub App registration instead, override the bundled ID as follows (not needed for normal use):
 
 1. Open <https://github.com/settings/apps> and choose **New GitHub App**. Fill in a name and homepage URL.
@@ -82,6 +88,8 @@ To develop or test against your own GitHub App registration instead, override th
 6. If sign-in reports an unknown client ID, double-check the copied value. Never paste a client secret or private key anywhere near this app.
 
 Official reference: <https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app>
+
+#### Run
 
 1. Run the app — it signs in with the bundled official client ID. Only to override the ID for development or testing against your own app registration:
 
