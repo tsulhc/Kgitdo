@@ -91,6 +91,12 @@ jobs:
           curl -fL --retry 3 -o tools/linuxdeploy-plugin-qt-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x tools/*.AppImage
           DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
+          # QQC2's org.kde.desktop style is selected dynamically by C++
+          # (QQuickStyle::setStyle), so a static QML scanner cannot discover it.
+          # Stage it before linuxdeploy to collect its plugin dependencies.
+          test -f /usr/lib64/qt6/qml/org/kde/desktop/qmldir
+          mkdir -p AppDir/usr/qml/org/kde
+          cp -a /usr/lib64/qt6/qml/org/kde/desktop AppDir/usr/qml/org/kde/
           # linuxdeploy's bundled patchelf is too old for Fedora's DT_RELR.
           # PATCHELF above selects the Fedora version rather than its bundled binary.
           test "$PATCHELF" = /usr/bin/patchelf
@@ -105,6 +111,7 @@ jobs:
           test -f squashfs-root/usr/plugins/platforms/libqoffscreen.so
           test -f squashfs-root/usr/plugins/platforms/libqwayland.so
           test -d squashfs-root/usr/qml/org/kde/kirigami
+          test -f squashfs-root/usr/qml/org/kde/desktop/qmldir
           payload="$PWD/squashfs-root"
           code=0
           QT_QPA_PLATFORM=offscreen timeout 5 /usr/bin/env \
