@@ -289,8 +289,11 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         // invalidation if the existing marker is actually listed. An
         // existing marker must still be removed and verified before any
         // credential fields can change.
-        if (m_backend->hasEntry(QLatin1String(kCommitKey))
-            && !m_backend->remove(QLatin1String(kCommitKey))) {
+        QByteArray oldMarker;
+        const bool markerPresent = m_backend->hasEntry(QLatin1String(kCommitKey))
+            || (m_backend->readBlob(QLatin1String(kCommitKey), oldMarker)
+                && !oldMarker.isEmpty());
+        if (markerPresent && !m_backend->remove(QLatin1String(kCommitKey))) {
             m_lastSaveFailureStep = QStringLiteral("preparing credentials");
             m_backend->close();
             return false;
