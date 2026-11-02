@@ -16,8 +16,13 @@ AsyncKWalletStore::AsyncKWalletStore(QObject *parent)
 
 AsyncKWalletStore::~AsyncKWalletStore()
 {
-    m_thread.quit();
-    m_thread.wait(); // Never destroy a running worker or lose queued wallet cleanup.
+    if (m_thread.isRunning()) {
+        // Drain saves and sign-out clears in FIFO order before quitting: a
+        // queued clear must not be dropped while a prior save is in flight.
+        QMetaObject::invokeMethod(m_worker, [] {}, Qt::BlockingQueuedConnection);
+        m_thread.quit();
+        m_thread.wait();
+    }
 }
 
 bool AsyncKWalletStore::isAvailable() const

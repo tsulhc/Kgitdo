@@ -339,6 +339,7 @@ void AuthSessionTest::logoutIgnoresLateSaveAndClearsAsync()
     QVERIFY(session.currentAccessToken().isEmpty());
     QVERIFY(session.userLogin().isEmpty());
     QVERIFY(static_cast<bool>(store.pendingClear));
+    QVERIFY(session.errorMessage().contains(QStringLiteral("Removing saved credentials")));
     // A previously queued write is allowed to finish, but cannot show a
     // logged-in account again or claim successful persistence in this session.
     store.pendingSave(true);

@@ -175,7 +175,7 @@ void AuthSession::logout()
     clearTokens();
     m_volatileSession = false;
     Q_EMIT volatileSessionChanged();
-    setError(QString());
+    setError(QStringLiteral("Signed out locally. Removing saved credentials…"));
     setPending(false);
     setStatus(SignedOut);
     // A pending save is serialized before this clear by the wallet worker.
@@ -184,7 +184,9 @@ void AuthSession::logout()
         if (attempt != m_attemptId || m_status != SignedOut) {
             return;
         }
-        if (!cleared) {
+        if (cleared) {
+            setError(QString());
+        } else {
             setError(QStringLiteral("Signed out, but saved credentials could not be removed. "
                                     "Use “Retry removing saved credentials” once the wallet is available."));
         }
