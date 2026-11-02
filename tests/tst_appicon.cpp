@@ -1,6 +1,6 @@
 #include <QtTest/QtTest>
 
-#include <QApplication>
+#include <QGuiApplication>
 #include <QFile>
 #include "AppIcon.h"
 
@@ -23,7 +23,7 @@ private Q_SLOTS:
 
 int main(int argc, char **argv)
 {
-    QApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
     AppIconTest test;
     return QTest::qExec(&test, argc, argv);
 }
