@@ -170,6 +170,10 @@ bool AuthSession::ensureFreshAccessToken()
 void AuthSession::logout()
 {
     const int attempt = ++m_attemptId;
+    ++m_saveGeneration;
+    m_walletSaving = false;
+    m_walletError.clear();
+    Q_EMIT walletStateChanged();
     stopPollTimer();
     clearDeviceState();
     clearTokens();
@@ -398,6 +402,13 @@ qint64 AuthSession::nowSecs() const
     return QDateTime::currentDateTimeUtc().toSecsSinceEpoch();
 }
 
+void AuthSession::retrySave()
+{
+    if (isAuthenticated() && m_volatileSession && !m_walletSaving && !m_accessToken.isEmpty()) {
+        persistCurrentTokens();
+    }
+}
+
 void AuthSession::persistCurrentTokens()
 {
     if (m_accessToken.isEmpty()) {
@@ -409,27 +420,38 @@ void AuthSession::persistCurrentTokens()
     stored.accessExpiresAtSecsSinceEpoch = m_accessExpiresAtSecs;
     stored.login = m_userLogin;
 
-    // The authenticated UI must never wait for KWallet: hold credentials in
-    // memory until a background save is actually confirmed.
+    // Never hold up the authenticated UI while KWallet confirms a write.
     m_volatileStore.save(stored);
     m_volatileSession = true;
     Q_EMIT volatileSessionChanged();
     Q_EMIT secureStorageChanged();
     if (!m_secureStore) {
+        m_walletError = QStringLiteral("KWallet storage is not configured.");
+        Q_EMIT walletStateChanged();
         return;
     }
     const int attempt = m_attemptId;
-    m_secureStore->saveAsync(stored, [this, attempt](bool saved) {
-        if (attempt != m_attemptId || !isAuthenticated()) {
-            return; // stale save after logout, refresh or account switch
+    const int generation = ++m_saveGeneration;
+    m_walletSaving = true;
+    m_walletError.clear();
+    Q_EMIT walletStateChanged();
+    m_secureStore->saveAsync(stored, [this, attempt, generation](bool saved) {
+        if (attempt != m_attemptId || generation != m_saveGeneration || !isAuthenticated()) {
+            return;
         }
+        m_walletSaving = false;
         if (saved) {
             m_volatileStore.clear();
             m_volatileSession = false;
             setClearFailed(false);
             Q_EMIT volatileSessionChanged();
             Q_EMIT secureStorageChanged();
+            m_walletError.clear();
+        } else {
+            m_walletError = QStringLiteral("KWallet did not confirm the save. "
+                                           "Check wallet access and select Retry saving.");
         }
+        Q_EMIT walletStateChanged();
     });
 }
 
