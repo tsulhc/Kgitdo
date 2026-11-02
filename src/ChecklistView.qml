@@ -369,6 +369,7 @@ ColumnLayout {
                                 implicitHeight: repoText.implicitHeight + 10
                                 implicitWidth: repoText.implicitWidth + 16
                                 Controls.Label {
+                                    textFormat: Text.PlainText
                                     id: repoText
                                     anchors.centerIn: parent
                                     textFormat: Text.PlainText
@@ -407,6 +408,7 @@ ColumnLayout {
                                     implicitWidth: tagText.implicitWidth + 16
                                     implicitHeight: tagText.implicitHeight + 7
                                     Controls.Label {
+                                        textFormat: Text.PlainText
                                         id: tagText
                                         anchors.centerIn: parent
                                         textFormat: Text.PlainText
