@@ -55,7 +55,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 visible: authSession.volatileSession
-                text: i18n("Wallet unavailable: this session is kept only in memory and will not survive a restart.")
+                text: i18n("Session is in memory while KWallet saves credentials, or if KWallet is unavailable. It may not survive a restart.")
             }
             RowLayout {
                 spacing: Kirigami.Units.smallSpacing

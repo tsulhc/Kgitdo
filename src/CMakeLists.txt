@@ -1,6 +1,8 @@
 add_library(kgitdoauth STATIC
     AuthSession.cpp
     AuthSession.h
+    AsyncKWalletStore.cpp
+    AsyncKWalletStore.h
     AuthTransport.h
     DeviceFlowProtocol.cpp
     DeviceFlowProtocol.h

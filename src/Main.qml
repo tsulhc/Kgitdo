@@ -220,7 +220,7 @@ Kirigami.ApplicationWindow {
                         Controls.Button {
                             Layout.alignment: Qt.AlignHCenter
                             text: i18n("Cancel")
-                            visible: authSession.status === 1
+                            visible: authSession.status === 1 || authSession.status === 3
                             onClicked: authSession.cancelLogin()
                             Accessible.name: text
                         }

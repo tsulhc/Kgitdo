@@ -169,21 +169,26 @@ bool AuthSession::ensureFreshAccessToken()
 
 void AuthSession::logout()
 {
-    ++m_attemptId;
+    const int attempt = ++m_attemptId;
     stopPollTimer();
     clearDeviceState();
     clearTokens();
-    const bool cleared = clearPersistedTokens();
     m_volatileSession = false;
     Q_EMIT volatileSessionChanged();
-    if (cleared) {
-        setError(QString());
-    } else {
-        setError(QStringLiteral("Signed out, but saved credentials could not be removed. "
-                                "Use “Retry removing saved credentials” once the wallet is available."));
-    }
+    setError(QString());
     setPending(false);
     setStatus(SignedOut);
+    // A pending save is serialized before this clear by the wallet worker.
+    // Neither the clear nor its eventual failure may resurrect the session.
+    clearPersistedTokens([this, attempt](bool cleared) {
+        if (attempt != m_attemptId || m_status != SignedOut) {
+            return;
+        }
+        if (!cleared) {
+            setError(QStringLiteral("Signed out, but saved credentials could not be removed. "
+                                    "Use “Retry removing saved credentials” once the wallet is available."));
+        }
+    });
 }
 
 void AuthSession::restore()
@@ -195,34 +200,41 @@ void AuthSession::restore()
         || m_status == RequestingDeviceCode) {
         return;
     }
-    StoredTokens stored;
-    if (!m_secureStore->load(stored) || stored.accessToken.isEmpty()) {
-        setPending(false);
-        setStatus(SignedOut);
-        return;
-    }
-    m_accessToken = stored.accessToken;
-    m_refreshToken = stored.refreshToken;
-    m_accessExpiresAtSecs = stored.accessExpiresAtSecsSinceEpoch;
-    m_userLogin = stored.login;
-    m_volatileSession = false;
-    Q_EMIT volatileSessionChanged();
-    Q_EMIT userLoginChanged();
-
-    if (!m_network) {
-        setPending(false);
-        setStatus(SignedOut);
-        return;
-    }
-    if (isAccessExpired() && !m_refreshToken.isEmpty()) {
-        refreshSession();
-        return;
-    }
     const int attempt = ++m_attemptId;
     setError(QString());
     setStatus(Refreshing);
     setPending(true);
-    fetchUserAndFinish(attempt);
+    // Do not open KWallet synchronously before the Qt event loop starts.
+    m_secureStore->loadAsync([this, attempt](bool loaded, StoredTokens stored) {
+        if (attempt != m_attemptId || m_status != Refreshing) {
+            return;
+        }
+        if (!loaded || stored.accessToken.isEmpty()) {
+            setPending(false);
+            setStatus(SignedOut);
+            return;
+        }
+        m_accessToken = stored.accessToken;
+        m_refreshToken = stored.refreshToken;
+        m_accessExpiresAtSecs = stored.accessExpiresAtSecsSinceEpoch;
+        m_userLogin = stored.login;
+        m_volatileSession = false;
+        Q_EMIT volatileSessionChanged();
+        Q_EMIT userLoginChanged();
+
+        if (!m_network) {
+            clearTokens();
+            setPending(false);
+            setStatus(SignedOut);
+            return;
+        }
+        if (isAccessExpired() && !m_refreshToken.isEmpty()) {
+            setPending(false);
+            refreshSession();
+            return;
+        }
+        fetchUserAndFinish(attempt);
+    });
 }
 
 void AuthSession::openVerificationPage()
@@ -394,29 +406,47 @@ void AuthSession::persistCurrentTokens()
     stored.refreshToken = m_refreshToken;
     stored.accessExpiresAtSecsSinceEpoch = m_accessExpiresAtSecs;
     stored.login = m_userLogin;
-    if (m_secureStore && m_secureStore->save(stored)) {
-        m_volatileSession = false;
-        // A fresh complete session is committed over everything persisted
-        // before: no stale leftovers remain to retry about.
-        setClearFailed(false);
-    } else {
-        // Wallet absent/refused: keep a volatile in-memory session and say so.
-        m_volatileStore.save(stored);
-        m_volatileSession = true;
-    }
+
+    // The authenticated UI must never wait for KWallet: hold credentials in
+    // memory until a background save is actually confirmed.
+    m_volatileStore.save(stored);
+    m_volatileSession = true;
     Q_EMIT volatileSessionChanged();
     Q_EMIT secureStorageChanged();
+    if (!m_secureStore) {
+        return;
+    }
+    const int attempt = m_attemptId;
+    m_secureStore->saveAsync(stored, [this, attempt](bool saved) {
+        if (attempt != m_attemptId || !isAuthenticated()) {
+            return; // stale save after logout, refresh or account switch
+        }
+        if (saved) {
+            m_volatileStore.clear();
+            m_volatileSession = false;
+            setClearFailed(false);
+            Q_EMIT volatileSessionChanged();
+            Q_EMIT secureStorageChanged();
+        }
+    });
 }
 
-bool AuthSession::clearPersistedTokens()
+void AuthSession::clearPersistedTokens(std::function<void(bool)> done)
 {
     m_volatileStore.clear();
-    bool cleared = true;
-    if (m_secureStore) {
-        cleared = m_secureStore->clear();
+    if (!m_secureStore) {
+        setClearFailed(false);
+        done(true);
+        return;
     }
-    setClearFailed(!cleared);
-    return cleared;
+    const int attempt = m_attemptId;
+    m_secureStore->clearAsync([this, attempt, done = std::move(done)](bool cleared) {
+        if (attempt != m_attemptId) {
+            return;
+        }
+        setClearFailed(!cleared);
+        done(cleared);
+    });
 }
 
 void AuthSession::setClearFailed(bool failed)
@@ -436,9 +466,12 @@ void AuthSession::retryClear()
     if (!m_clearFailed || !m_secureStore) {
         return;
     }
-    if (clearPersistedTokens()) {
-        setError(QString());
-    }
+    const int attempt = m_attemptId;
+    clearPersistedTokens([this, attempt](bool cleared) {
+        if (attempt == m_attemptId && cleared) {
+            setError(QString());
+        }
+    });
 }
 
 void AuthSession::handleDeviceCodeResult(int attemptId, const IAuthNetwork::DeviceCodeResult &result)
@@ -564,20 +597,20 @@ void AuthSession::handleRefreshResult(int attemptId, const IAuthNetwork::TokenRe
     }
     const QString code = result.data.errorCode;
     if (code == QLatin1String("bad_refresh_token")) {
-        ++m_attemptId;
+        const int revokedAttempt = ++m_attemptId;
         clearTokens();
-        const bool cleared = clearPersistedTokens();
         m_volatileSession = false;
         Q_EMIT volatileSessionChanged();
         setPending(false);
-        if (cleared) {
-            setError(QStringLiteral("Session expired. Please sign in again."));
-        } else {
-            setError(QStringLiteral("Session expired. Please sign in again. "
-                                    "Saved credentials could not be removed; use “Retry removing "
-                                    "saved credentials” once the wallet is available."));
-        }
+        setError(QStringLiteral("Session expired. Please sign in again."));
         setStatus(SignedOut);
+        clearPersistedTokens([this, revokedAttempt](bool cleared) {
+            if (revokedAttempt == m_attemptId && !cleared) {
+                setError(QStringLiteral("Session expired. Please sign in again. "
+                                        "Saved credentials could not be removed; use “Retry removing "
+                                        "saved credentials” once the wallet is available."));
+            }
+        });
         return;
     }
     setPending(false);
@@ -604,30 +637,29 @@ void AuthSession::handleUserResult(int attemptId, const IAuthNetwork::UserResult
     if (result.ok) {
         m_userLogin = result.login;
         Q_EMIT userLoginChanged();
-        persistCurrentTokens();
         setError(QString());
         setPending(false);
         setStatus(Authenticated);
+        persistCurrentTokens();
         return;
     }
     if (result.unauthorized) {
-        // Revoked/expired token: drop local credentials, require sign-in.
-        ++m_attemptId;
+        const int revokedAttempt = ++m_attemptId;
         stopPollTimer();
         clearDeviceState();
         clearTokens();
-        const bool cleared = clearPersistedTokens();
         m_volatileSession = false;
         Q_EMIT volatileSessionChanged();
         setPending(false);
-        if (cleared) {
-            setError(QStringLiteral("Session was revoked or expired. Please sign in again."));
-        } else {
-            setError(QStringLiteral("Session was revoked or expired. Please sign in again. "
-                                    "Saved credentials could not be removed; use “Retry removing "
-                                    "saved credentials” once the wallet is available."));
-        }
+        setError(QStringLiteral("Session was revoked or expired. Please sign in again."));
         setStatus(SignedOut);
+        clearPersistedTokens([this, revokedAttempt](bool cleared) {
+            if (revokedAttempt == m_attemptId && !cleared) {
+                setError(QStringLiteral("Session was revoked or expired. Please sign in again. "
+                                        "Saved credentials could not be removed; use “Retry removing "
+                                        "saved credentials” once the wallet is available."));
+            }
+        });
         return;
     }
     // Rate limits, 403/404, offline, malformed: keep tokens out of the store.

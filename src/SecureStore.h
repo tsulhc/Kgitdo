@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QString>
+#include <functional>
+#include <utility>
 
 // Tokens as persisted by the secure store. Only the store implementation
 // may touch these values on disk; AuthSession keeps the live copies.
@@ -38,6 +40,23 @@ public:
     virtual bool load(StoredTokens &out) = 0;
     virtual bool save(const StoredTokens &tokens) = 0;
     virtual bool clear() = 0;
+
+    // Production implementations may do wallet I/O on a dedicated thread.
+    // Defaults preserve synchronous behavior for small in-memory test stores.
+    virtual void loadAsync(std::function<void(bool, StoredTokens)> done)
+    {
+        StoredTokens tokens;
+        const bool loaded = load(tokens);
+        done(loaded, std::move(tokens));
+    }
+    virtual void saveAsync(const StoredTokens &tokens, std::function<void(bool)> done)
+    {
+        done(save(tokens));
+    }
+    virtual void clearAsync(std::function<void(bool)> done)
+    {
+        done(clear());
+    }
 };
 
 // Volatile fallback: keeps tokens only for the process lifetime.

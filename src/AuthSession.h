@@ -157,10 +157,9 @@ private:
     qint64 nowSecs() const;
     void persistCurrentTokens();
     void setClearFailed(bool failed);
-    // Clears the volatile fallback and the secure store. True when nothing
-    // may remain: callers must warn instead of claiming a clean logout
-    // when this returns false.
-    bool clearPersistedTokens();
+    // Request wallet cleanup without blocking the event loop. The result is
+    // confirmed asynchronously; report a warning if removal cannot be verified.
+    void clearPersistedTokens(std::function<void(bool)> done);
     void handleDeviceCodeResult(int attemptId, const IAuthNetwork::DeviceCodeResult &result);
     void handlePollResult(int attemptId, const IAuthNetwork::TokenResult &result);
     void handleRefreshResult(int attemptId, const IAuthNetwork::TokenResult &result);
