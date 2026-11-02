@@ -82,3 +82,19 @@ add_executable(tst_qmlsecurity tst_qmlsecurity.cpp)
 target_link_libraries(tst_qmlsecurity PRIVATE Qt6::Test)
 target_compile_definitions(tst_qmlsecurity PRIVATE KGITDO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME tst_qmlsecurity COMMAND tst_qmlsecurity)
+
+# Exercise actual Main.qml visibility and transitions, not only C++ state.
+add_executable(tst_mainqml_auth tst_mainqml_auth.cpp)
+target_link_libraries(tst_mainqml_auth PRIVATE
+    kgitdoauth
+    kgitdoissues
+    Qt6::Test
+    Qt6::Quick
+    Qt6::Qml
+    Qt6::Widgets
+    Qt6::QuickControls2
+    KF6::I18n
+)
+target_compile_definitions(tst_mainqml_auth PRIVATE KGITDO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME tst_mainqml_auth COMMAND tst_mainqml_auth)
+set_tests_properties(tst_mainqml_auth PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
