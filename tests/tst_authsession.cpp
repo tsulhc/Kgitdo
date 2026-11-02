@@ -198,12 +198,46 @@ private:
     InMemorySecureStore m_inner;
 };
 
+// Simulate KWallet indefinitely delaying each operation without blocking
+// the calling thread. The session must remain usable and ignore stale replies.
+class DeferredSecureStore final : public ISecureStore
+{
+public:
+    bool isAvailable() const override { return true; }
+    QString backendName() const override { return QStringLiteral("deferred"); }
+    bool load(StoredTokens &) override { return false; }
+    bool save(const StoredTokens &) override { return false; }
+    bool clear() override { return false; }
+
+    void saveAsync(const StoredTokens &tokens, std::function<void(bool)> done) override
+    {
+        pendingTokens = tokens;
+        pendingSave = std::move(done);
+    }
+    void clearAsync(std::function<void(bool)> done) override
+    {
+        pendingClear = std::move(done);
+    }
+    void loadAsync(std::function<void(bool, StoredTokens)> done) override
+    {
+        pendingLoad = std::move(done);
+    }
+
+    StoredTokens pendingTokens;
+    std::function<void(bool)> pendingSave;
+    std::function<void(bool)> pendingClear;
+    std::function<void(bool, StoredTokens)> pendingLoad;
+};
+
 class AuthSessionTest : public QObject
 {
     Q_OBJECT
 
 private Q_SLOTS:
     void loginSuccessAfterPending();
+    void delayedWalletSaveCannotHoldAuthenticatedUI();
+    void logoutIgnoresLateSaveAndClearsAsync();
+    void restoreCancellationIgnoresLateWalletLoad();
     void slowDownIncreasesInterval();
     void waitingCodeCountdownNotifiesAndStopsOnCancel();
     void pollingProgressReportsOnlySafeStatuses();
@@ -260,6 +294,80 @@ void AuthSessionTest::loginSuccessAfterPending()
     QVERIFY(store.load(stored));
     QCOMPARE(stored.accessToken, QStringLiteral("ghu_new"));
     QCOMPARE(stored.login, QStringLiteral("octocat"));
+}
+
+void AuthSessionTest::delayedWalletSaveCannotHoldAuthenticatedUI()
+{
+    FakeAuthNetwork net;
+    DeferredSecureStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makeTokenOk();
+    net.userQueue << FakeAuthNetwork::makeUserOk();
+
+    session.startLogin();
+    session.pollOnce();
+    // The wallet has deliberately not completed: auth must already be usable.
+    QCOMPARE(session.status(), AuthSession::Authenticated);
+    QVERIFY(session.isVolatileSession());
+    QCOMPARE(session.userLogin(), QStringLiteral("octocat"));
+    QVERIFY(static_cast<bool>(store.pendingSave));
+    QCOMPARE(store.pendingTokens.login, QStringLiteral("octocat"));
+    QVERIFY(session.ensureFreshAccessToken());
+
+    store.pendingSave(true);
+    QCOMPARE(session.status(), AuthSession::Authenticated);
+    QVERIFY(!session.isVolatileSession());
+}
+
+void AuthSessionTest::logoutIgnoresLateSaveAndClearsAsync()
+{
+    FakeAuthNetwork net;
+    DeferredSecureStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makeTokenOk();
+    net.userQueue << FakeAuthNetwork::makeUserOk();
+
+    session.startLogin();
+    session.pollOnce();
+    QVERIFY(static_cast<bool>(store.pendingSave));
+    session.logout();
+    QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(session.currentAccessToken().isEmpty());
+    QVERIFY(session.userLogin().isEmpty());
+    QVERIFY(static_cast<bool>(store.pendingClear));
+    // A previously queued write is allowed to finish, but cannot show a
+    // logged-in account again or claim successful persistence in this session.
+    store.pendingSave(true);
+    QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(!session.clearFailed());
+    store.pendingClear(false);
+    QVERIFY(session.clearFailed());
+    QVERIFY(session.errorMessage().contains(QStringLiteral("could not be removed")));
+}
+
+void AuthSessionTest::restoreCancellationIgnoresLateWalletLoad()
+{
+    FakeAuthNetwork net;
+    DeferredSecureStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    session.restore();
+    QCOMPARE(session.status(), AuthSession::Refreshing);
+    QVERIFY(static_cast<bool>(store.pendingLoad));
+    session.cancelLogin();
+    QCOMPARE(session.status(), AuthSession::SignedOut);
+
+    StoredTokens saved;
+    saved.accessToken = QStringLiteral("synthetic-token");
+    saved.login = QStringLiteral("octocat");
+    store.pendingLoad(true, saved);
+    QCOMPARE(session.status(), AuthSession::SignedOut);
+    QVERIFY(session.currentAccessToken().isEmpty());
+    QCOMPARE(net.userRequests, 0);
 }
 
 void AuthSessionTest::waitingCodeCountdownNotifiesAndStopsOnCancel()
