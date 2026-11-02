@@ -16,28 +16,29 @@ Kirigami.ApplicationWindow {
     title: i18nc("@title:window", "Kgitdo")
 
     pageStack.initialPage: Kirigami.Page {
+        id: authPage
         title: i18nc("@title", "To-do")
 
         // Status values mirror AuthSession::Status:
         // 0 SignedOut, 1 RequestingDeviceCode, 2 AwaitingAuthorization,
         // 3 Refreshing, 4 Authenticated, 5 Failed.
-        readonly property bool isAuthenticated: authSession.isAuthenticated
-        readonly property bool isAwaiting: authSession.status === 2
-        readonly property bool isBusy: authSession.status === 1 || authSession.status === 3
-        readonly property bool isFailed: authSession.status === 5
-        readonly property bool isSignedOut: authSession.status === 0
+        // Bind every section to the AuthSession Q_PROPERTY directly. Bare
+        // page-local aliases inside card contentItem can resolve out of scope
+        // after Kirigami re-parents pages, leaving all sections visible.
 
         // Signed-in users get the W3 checklist; everyone else keeps the
         // W1 sign-in card below.
         ChecklistView {
+            objectName: "checklistContent"
             anchors.fill: parent
-            visible: isAuthenticated
+            visible: authSession.isAuthenticated
         }
 
         Kirigami.CardsLayout {
+            objectName: "signInContent"
             anchors.fill: parent
             maximumColumns: 1
-            visible: !isAuthenticated
+            visible: !authSession.isAuthenticated
 
             Kirigami.AbstractCard {
                 contentItem: ColumnLayout {
@@ -79,16 +80,16 @@ Kirigami.ApplicationWindow {
                             if (!authSession.clientIdConfigured) {
                                 return i18n("GitHub App not configured");
                             }
-                            if (isAuthenticated) {
+                            if (authSession.isAuthenticated) {
                                 return i18n("Signed in as %1", authSession.userLogin);
                             }
-                            if (isAwaiting) {
+                            if (authSession.status === 2) {
                                 return i18n("Waiting for GitHub authorization…");
                             }
-                            if (isBusy) {
+                            if (authSession.status === 1 || authSession.status === 3) {
                                 return i18n("Contacting GitHub…");
                             }
-                            if (isFailed) {
+                            if (authSession.status === 5) {
                                 return i18n("Sign-in needs attention");
                             }
                             return i18n("Not signed in");
@@ -121,8 +122,9 @@ Kirigami.ApplicationWindow {
                     // Authenticated users see the checklist (ChecklistView above).
                     // Awaiting authorization: device code + browser step.
                     ColumnLayout {
+                        objectName: "authWaitSection"
                         Layout.fillWidth: true
-                        visible: authSession.clientIdConfigured && isAwaiting
+                        visible: authSession.clientIdConfigured && authSession.status === 2
                         spacing: Kirigami.Units.smallSpacing
 
                         Controls.Label {
@@ -210,8 +212,10 @@ Kirigami.ApplicationWindow {
 
                     // Busy: requesting code or refreshing/validating.
                     ColumnLayout {
+                        objectName: "authBusySection"
                         Layout.fillWidth: true
-                        visible: authSession.clientIdConfigured && isBusy
+                        visible: authSession.clientIdConfigured
+                                 && (authSession.status === 1 || authSession.status === 3)
                         spacing: Kirigami.Units.smallSpacing
                         Controls.BusyIndicator {
                             Layout.alignment: Qt.AlignHCenter
@@ -228,8 +232,10 @@ Kirigami.ApplicationWindow {
 
                     // Signed out / failed: entry point + errors.
                     ColumnLayout {
+                        objectName: "authEntrySection"
                         Layout.fillWidth: true
-                        visible: authSession.clientIdConfigured && (isSignedOut || isFailed)
+                        visible: authSession.clientIdConfigured
+                                 && (authSession.status === 0 || authSession.status === 5)
                         spacing: Kirigami.Units.smallSpacing
 
                         Controls.Label {
