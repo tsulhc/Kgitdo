@@ -372,7 +372,6 @@ ColumnLayout {
                                     textFormat: Text.PlainText
                                     id: repoText
                                     anchors.centerIn: parent
-                                    textFormat: Text.PlainText
                                     text: model.repoFullName
                                     color: "#d2eaff"
                                     font.pixelSize: 13
@@ -411,7 +410,6 @@ ColumnLayout {
                                         textFormat: Text.PlainText
                                         id: tagText
                                         anchors.centerIn: parent
-                                        textFormat: Text.PlainText
                                         text: modelData
                                         color: "#f3f4f6"
                                         font.pixelSize: 12
