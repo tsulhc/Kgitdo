@@ -1,6 +1,8 @@
 #include "KWalletSecureStore.h"
 
 #include <KWallet>
+#include <QEventLoop>
+#include <QTimer>
 
 namespace
 {
@@ -39,9 +41,31 @@ public:
         if (!KWallet::Wallet::isEnabled()) {
             return false;
         }
+        // A synchronous KWallet open may wait indefinitely for a D-Bus
+        // response (including wallet authorization). Drive KDE's asynchronous
+        // open in this dedicated worker thread with a bounded local event
+        // loop instead; never freeze sign-in or queue subsequent operations
+        // behind an unbounded wallet-open request.
         m_wallet = KWallet::Wallet::openWallet(KWallet::Wallet::NetworkWallet(), 0,
-                                               KWallet::Wallet::Synchronous);
-        return m_wallet && m_wallet->isOpen();
+                                               KWallet::Wallet::Asynchronous);
+        if (!m_wallet) {
+            return false;
+        }
+        if (!m_wallet->isOpen()) {
+            QEventLoop loop;
+            QTimer timeout;
+            timeout.setSingleShot(true);
+            QObject::connect(m_wallet, &KWallet::Wallet::walletOpened, &loop,
+                             [&loop](bool) { loop.quit(); });
+            QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+            timeout.start(12000);
+            loop.exec();
+        }
+        const bool opened = m_wallet->isOpen();
+        if (!opened) {
+            close();
+        }
+        return opened;
     }
 
     void close() override
