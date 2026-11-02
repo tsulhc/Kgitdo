@@ -22,10 +22,12 @@ public:
     QString backendName() const override;
     bool load(StoredTokens &out) override;
     bool save(const StoredTokens &tokens) override;
+    QString lastSaveFailureStep() const override { return m_lastSaveFailureStep; }
     bool clear() override;
 
 private:
     IWalletBackend *m_backend = nullptr;
+    QString m_lastSaveFailureStep;
     // Unknown-unless-verified-empty: true until this instance establishes
     // that no credentials are persisted — a verified clear, an absent
     // folder, or a folder provably carrying no credential entries. Starts

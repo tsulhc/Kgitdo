@@ -448,8 +448,10 @@ void AuthSession::persistCurrentTokens()
             Q_EMIT secureStorageChanged();
             m_walletError.clear();
         } else {
-            m_walletError = QStringLiteral("KWallet did not confirm the save. "
-                                           "Check wallet access and select Retry saving.");
+            const QString stage = m_secureStore->lastSaveFailureStep();
+            m_walletError = stage.isEmpty()
+                ? QStringLiteral("KWallet did not confirm the save. Select Retry saving.")
+                : QStringLiteral("KWallet error while %1. Select Retry saving.").arg(stage);
         }
         Q_EMIT walletStateChanged();
     });

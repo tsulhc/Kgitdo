@@ -235,13 +235,16 @@ bool KWalletSecureStore::load(StoredTokens &out)
 
 bool KWalletSecureStore::save(const StoredTokens &tokens)
 {
+    m_lastSaveFailureStep = QStringLiteral("wallet unavailable");
     if (!m_backend || !m_backend->isEnabled() || tokens.accessToken.isEmpty()) {
         return false;
     }
     if (!m_backend->open()) {
+        m_lastSaveFailureStep = QStringLiteral("opening wallet");
         return false;
     }
     bool ok = false;
+    m_lastSaveFailureStep = QStringLiteral("selecting folder");
     if (m_backend->selectFolder(true)) {
         // This instance is about to mutate persisted state, so arm the
         // fail-closed cleanup duty first: if any write below (or its
@@ -257,6 +260,7 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         // fields: the previous complete session (or nothing) remains, which
         // load() treats as before, never as a half-updated mix.
         if (!m_backend->remove(QLatin1String(kCommitKey))) {
+            m_lastSaveFailureStep = QStringLiteral("preparing credentials");
             m_backend->close();
             return false;
         }
@@ -270,12 +274,21 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         // Commit only a fully written field set: the marker must never be
         // (re)written alongside failed fields.
         const bool fieldsOk = accessOk && refreshOk && loginOk && expiresOk;
+        if (!fieldsOk) {
+            m_lastSaveFailureStep = !accessOk ? QStringLiteral("writing credentials")
+                : !refreshOk ? QStringLiteral("writing refresh credential")
+                : !loginOk ? QStringLiteral("writing account")
+                : QStringLiteral("writing expiry");
+        }
         bool commitOk = false;
         if (fieldsOk) {
             commitOk =
                 m_backend->writeBlob(QLatin1String(kCommitKey), QByteArray(kCommitValue));
         }
         ok = fieldsOk && commitOk;
+        if (fieldsOk && !commitOk) {
+            m_lastSaveFailureStep = QStringLiteral("committing credentials");
+        }
         if (ok) {
             // Verify rather than trust the backend's write reports: re-read
             // every value and compare, so a backend that acknowledges
@@ -297,6 +310,9 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
                 && m_backend->readBlob(QLatin1String(kCommitKey), commitCheck)
                 && commitCheck == QByteArray(kCommitValue);
         }
+        if (fieldsOk && commitOk && !ok) {
+            m_lastSaveFailureStep = QStringLiteral("verifying saved credentials");
+        }
         if (!ok) {
             // Roll back partial writes: never leave mixed or half-rotated
             // credentials behind for a later launch to pick up. Removal is
@@ -310,6 +326,9 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         }
     }
     m_backend->close();
+    if (ok) {
+        m_lastSaveFailureStep.clear();
+    }
     return ok;
 }
 

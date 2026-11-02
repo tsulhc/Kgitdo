@@ -40,6 +40,8 @@ public:
     virtual bool load(StoredTokens &out) = 0;
     virtual bool save(const StoredTokens &tokens) = 0;
     virtual bool clear() = 0;
+    // Non-sensitive operation stage for actionable KWallet diagnostics.
+    virtual QString lastSaveFailureStep() const { return {}; }
 
     // Production implementations may do wallet I/O on a dedicated thread.
     // Defaults preserve synchronous behavior for small in-memory test stores.

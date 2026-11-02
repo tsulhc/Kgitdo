@@ -16,6 +16,7 @@ public:
 
     bool isAvailable() const override;
     QString backendName() const override { return QStringLiteral("kwallet"); }
+    QString lastSaveFailureStep() const override { return m_lastSaveFailureStep; }
 
     // Deliberately unavailable: production callers must use the async API.
     bool load(StoredTokens &) override { return false; }
@@ -29,4 +30,5 @@ public:
 private:
     QThread m_thread;
     QObject *m_worker = nullptr;
+    QString m_lastSaveFailureStep;
 };
