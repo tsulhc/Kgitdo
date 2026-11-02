@@ -28,6 +28,9 @@ public:
     // Simulates silent write loss: writes report success but store nothing,
     // mirroring a wallet API that acks without persisting.
     bool dropWrites = false;
+    // Real KWallet versions may reject removeEntry for an absent key,
+    // independent of readback semantics. This must not break first login.
+    bool failRemovingAbsentCommit = false;
     QStringList removedKeys;
     bool wasOpened = false;
 
@@ -121,6 +124,10 @@ public:
         // Simulates the KWallet primitives and interprets them with the same
         // production policy, so policy regressions fail here too.
         removedKeys << key;
+        if (failRemovingAbsentCommit && key == QLatin1String("committed")
+            && !entries.contains(key)) {
+            return false;
+        }
         const bool removeSucceeded = !failingRemoves.contains(key);
         if (removeSucceeded) {
             entries.remove(key);
@@ -161,6 +168,7 @@ class WalletStoreTest : public QObject
 
 private Q_SLOTS:
     void saveLoadRoundTrip();
+    void firstSaveDoesNotRemoveMissingCommitMarker();
     void saveEmptyAccessFails();
     void savePartialFailureRollsBack();
     void saveCommitWriteFailureLeavesUnloadableState();
@@ -203,6 +211,26 @@ void WalletStoreTest::saveLoadRoundTrip()
     QCOMPARE(loaded.refreshToken, QStringLiteral("ghr_saved"));
     QCOMPARE(loaded.accessExpiresAtSecsSinceEpoch, 1700000000);
     QCOMPARE(loaded.login, QStringLiteral("octocat"));
+}
+
+void WalletStoreTest::firstSaveDoesNotRemoveMissingCommitMarker()
+{
+    FakeBackend backend;
+    backend.hasFolder = true; // existing empty Kgitdo folder in KWallet
+    backend.failRemovingAbsentCommit = true;
+    KWalletSecureStore store(nullptr, &backend);
+    QVERIFY(store.save(makeTokens()));
+    // The initial write must not call removeEntry("committed") at all.
+    QVERIFY(!backend.removedKeys.contains(QStringLiteral("committed")));
+    StoredTokens loaded;
+    QVERIFY(store.load(loaded));
+    QCOMPARE(loaded.accessToken, makeTokens().accessToken);
+    QCOMPARE(loaded.login, makeTokens().login);
+    // On a later rotation the old marker IS present and must be removed.
+    QVERIFY(store.save(makeTokensAlt()));
+    QVERIFY(backend.removedKeys.contains(QStringLiteral("committed")));
+    QVERIFY(store.load(loaded));
+    QCOMPARE(loaded.login, makeTokensAlt().login);
 }
 
 void WalletStoreTest::saveEmptyAccessFails()

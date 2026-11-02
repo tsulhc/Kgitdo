@@ -283,7 +283,14 @@ bool KWalletSecureStore::save(const StoredTokens &tokens)
         // If the old marker cannot be removed, abort without touching the
         // fields: the previous complete session (or nothing) remains, which
         // load() treats as before, never as a half-updated mix.
-        if (!m_backend->remove(QLatin1String(kCommitKey))) {
+        // On first sign-in there is no commit marker to remove. Some
+        // KWallet backends return an error for removeEntry() on a missing
+        // key, which used to abort EVERY initial save here. Only attempt
+        // invalidation if the existing marker is actually listed. An
+        // existing marker must still be removed and verified before any
+        // credential fields can change.
+        if (m_backend->hasEntry(QLatin1String(kCommitKey))
+            && !m_backend->remove(QLatin1String(kCommitKey))) {
             m_lastSaveFailureStep = QStringLiteral("preparing credentials");
             m_backend->close();
             return false;

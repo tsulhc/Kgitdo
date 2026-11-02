@@ -7,6 +7,19 @@ class QmlSecurityTest : public QObject
     Q_OBJECT
 
 private Q_SLOTS:
+    void issueTitlesHaveSingleRenderingPath()
+    {
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        // Never reintroduce a button with both a native text layer and a
+        // custom contentItem label for the issue title.
+        QVERIFY(qml.contains(QStringLiteral("objectName: \"issueTitleLabel\"")));
+        QVERIFY(!qml.contains(QStringLiteral("id: issueTitleButton")));
+        QVERIFY(qml.contains(QStringLiteral("text: model.title")));
+        QVERIFY(qml.contains(QStringLiteral("textFormat: Text.PlainText")));
+    }
+
     void externalIssueTextIsAlwaysPlainText()
     {
         // Defensive contract: every Controls.Label in the two views must

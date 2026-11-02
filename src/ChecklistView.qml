@@ -78,8 +78,8 @@ ColumnLayout {
                     Controls.Label {
                         textFormat: Text.PlainText
                         text: i18n("My issues")
-                        font.pixelSize: 23
-                        font.bold: true
+                        font.pixelSize: 21
+                        font.weight: Font.DemiBold
                         Accessible.name: text
                     }
                     Controls.Label {
@@ -345,26 +345,28 @@ ColumnLayout {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 5
-                        Controls.Button {
-                            id: issueTitleButton
+                        // Render the title exactly ONCE. Kirigami's
+                        // native button style can paint the text in addition
+                        // to a custom contentItem, causing the overlapping
+                        // doubled letters visible in the Fedora screenshot.
+                        Controls.Label {
+                            objectName: "issueTitleLabel"
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
-                            flat: true
-                            padding: 2
                             text: model.title
-                            font.pixelSize: 17
-                            font.bold: true
-                            contentItem: Controls.Label {
-                                textFormat: Text.PlainText
-                                text: issueTitleButton.text
-                                font: issueTitleButton.font
-                                wrapMode: Text.WordWrap
-                                horizontalAlignment: Text.AlignLeft
-                                color: Kirigami.Theme.textColor
-                            }
-                            onClicked: checklist.showIssue(model.title, model.body,
-                                                           model.repoFullName, model.number,
-                                                           model.htmlUrl, model.labels)
+                            font.pixelSize: 16
+                            font.weight: Font.Medium
+                            wrapMode: Text.WordWrap
+                            color: Kirigami.Theme.textColor
+                            Accessible.role: Accessible.Button
                             Accessible.name: text
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: checklist.showIssue(model.title, model.body,
+                                                               model.repoFullName, model.number,
+                                                               model.htmlUrl, model.labels)
+                            }
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -383,7 +385,7 @@ ColumnLayout {
                                     text: model.repoFullName
                                     color: "#d2eaff"
                                     font.pixelSize: 13
-                                    font.bold: true
+                                    font.weight: Font.Medium
                                 }
                             }
                             Controls.Label {
@@ -420,7 +422,7 @@ ColumnLayout {
                                         anchors.centerIn: parent
                                         text: modelData
                                         color: "#f3f4f6"
-                                        font.pixelSize: 12
+                                        font.pixelSize: 13
                                     }
                                 }
                             }
@@ -493,8 +495,8 @@ ColumnLayout {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: checklist.openedTitle
-                font.pixelSize: 21
-                font.bold: true
+                font.pixelSize: 20
+                font.weight: Font.DemiBold
                 wrapMode: Text.WordWrap
             }
             Controls.ScrollView {
