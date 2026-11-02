@@ -350,8 +350,8 @@ ColumnLayout {
                         // to a custom contentItem, causing the overlapping
                         // doubled letters visible in the Fedora screenshot.
                         Controls.Label {
-                            objectName: "issueTitleLabel"
                             textFormat: Text.PlainText
+                            objectName: "issueTitleLabel"
                             Layout.fillWidth: true
                             text: model.title
                             font.pixelSize: 16
