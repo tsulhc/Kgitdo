@@ -1,6 +1,8 @@
 #include <QApplication>
 #include <QByteArray>
 #include <QIcon>
+
+#include "AppIcon.h"
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QtQml>
@@ -34,10 +36,14 @@ int main(int argc, char *argv[])
     QApplication::setDesktopFileName(QStringLiteral("org.kde.kgitdo"));
     QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
     QApplication::setStyle(QStringLiteral("breeze"));
-    // W7: explicit window icon so standalone/AppImage windows (no installed
-    // desktop file for task matching) show the official identity. fromTheme
-    // returns null when unavailable, which keeps the prior behavior there.
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("org.kde.kgitdo")));
+    // AppImages do not register icon theme paths in the host desktop.
+    // Render the bundled SVG into pixmaps so the window/taskbar icon works
+    // without depending on a system icon theme or SVG imageformat plugin.
+    QIcon icon = makeAppIcon();
+    if (icon.isNull()) {
+        icon = QIcon::fromTheme(QStringLiteral("org.kde.kgitdo"));
+    }
+    app.setWindowIcon(icon);
 
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
         QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));

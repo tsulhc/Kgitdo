@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/kgitdo">
+    <file alias="icon.svg">../icons/sc-apps-org.kde.kgitdo.svg</file>
+  </qresource>
+</RCC>

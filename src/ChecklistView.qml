@@ -318,7 +318,7 @@ ColumnLayout {
             id: issueList
             anchors.fill: parent
             model: issueController.model
-            spacing: Kirigami.Units.smallSpacing
+            spacing: 2
             focus: true
             activeFocusOnTab: true
             clip: true
@@ -327,8 +327,21 @@ ColumnLayout {
                 id: issueCard
                 width: ListView.view.width - 8
                 property var rowLabels: model.labels
+                // A subtle outline, not a second high-contrast card surface.
+                // Theme-derived colors work in both Breeze Light and Dark.
+                background: Rectangle {
+                    radius: 5
+                    color: Qt.tint(Kirigami.Theme.backgroundColor,
+                                   Qt.rgba(Kirigami.Theme.textColor.r,
+                                           Kirigami.Theme.textColor.g,
+                                           Kirigami.Theme.textColor.b, 0.025))
+                    border.width: 1
+                    border.color: Qt.rgba(Kirigami.Theme.textColor.r,
+                                          Kirigami.Theme.textColor.g,
+                                          Kirigami.Theme.textColor.b, 0.10)
+                }
                 contentItem: RowLayout {
-                    spacing: Kirigami.Units.largeSpacing
+                    spacing: Kirigami.Units.smallSpacing
                     Controls.CheckBox {
                         checked: model.state === "closed"
                         enabled: !model.pending && !issueController.loading
@@ -345,67 +358,32 @@ ColumnLayout {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 5
-                        // Render the title exactly ONCE. Kirigami's
-                        // native button style can paint the text in addition
-                        // to a custom contentItem, causing the overlapping
-                        // doubled letters visible in the Fedora screenshot.
-                        Controls.Label {
-                            textFormat: Text.PlainText
-                            objectName: "issueTitleLabel"
+                        // A single responsive Flow: issue number precedes the
+                        // title, and tags follow on the same line when space
+                        // allows, wrapping naturally below on narrow windows.
+                        Flow {
+                            id: titleAndLabels
                             Layout.fillWidth: true
-                            text: model.title
-                            font.pixelSize: 16
-                            font.weight: Font.Medium
-                            wrapMode: Text.WordWrap
-                            color: Kirigami.Theme.textColor
-                            Accessible.role: Accessible.Button
-                            Accessible.name: text
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: checklist.showIssue(model.title, model.body,
-                                                               model.repoFullName, model.number,
-                                                               model.htmlUrl, model.labels)
-                            }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-                            Rectangle {
-                                color: "#253a4a"
-                                border.color: "#456478"
-                                border.width: 1
-                                radius: 6
-                                implicitHeight: repoText.implicitHeight + 10
-                                implicitWidth: repoText.implicitWidth + 16
-                                Controls.Label {
-                                    textFormat: Text.PlainText
-                                    id: repoText
-                                    anchors.centerIn: parent
-                                    text: model.repoFullName
-                                    color: "#d2eaff"
-                                    font.pixelSize: 13
-                                    font.weight: Font.Medium
+                            spacing: 7
+                            Controls.Label {
+                                textFormat: Text.PlainText
+                                objectName: "issueTitleLabel"
+                                text: "#" + model.number + "  " + model.title
+                                width: Math.min(implicitWidth, titleAndLabels.width)
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: 16
+                                font.weight: Font.Medium
+                                color: Kirigami.Theme.textColor
+                                Accessible.role: Accessible.Button
+                                Accessible.name: text
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: checklist.showIssue(model.title, model.body,
+                                                                   model.repoFullName, model.number,
+                                                                   model.htmlUrl, model.labels)
                                 }
                             }
-                            Controls.Label {
-                                textFormat: Text.PlainText
-                                text: "#" + model.number
-                                opacity: 0.85
-                                font.pixelSize: 13
-                            }
-                            Controls.Label {
-                                textFormat: Text.PlainText
-                                text: model.updatedAt !== undefined && !isNaN(model.updatedAt.getTime())
-                                    ? model.updatedAt.toLocaleString(Qt.locale(), Locale.ShortFormat) : ""
-                                opacity: 0.65
-                                font.pixelSize: 12
-                            }
-                            Item { Layout.fillWidth: true }
-                        }
-                        Flow {
-                            Layout.fillWidth: true
-                            spacing: 6
                             Repeater {
                                 model: issueCard.rowLabels
                                 delegate: Rectangle {
@@ -426,6 +404,40 @@ ColumnLayout {
                                     }
                                 }
                             }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Rectangle {
+                                radius: 6
+                                color: Qt.tint(Kirigami.Theme.backgroundColor,
+                                               Qt.rgba(Kirigami.Theme.highlightColor.r,
+                                                       Kirigami.Theme.highlightColor.g,
+                                                       Kirigami.Theme.highlightColor.b, 0.20))
+                                border.color: Qt.rgba(Kirigami.Theme.highlightColor.r,
+                                                      Kirigami.Theme.highlightColor.g,
+                                                      Kirigami.Theme.highlightColor.b, 0.5)
+                                border.width: 1
+                                implicitHeight: repoText.implicitHeight + 10
+                                implicitWidth: repoText.implicitWidth + 16
+                                Controls.Label {
+                                    textFormat: Text.PlainText
+                                    id: repoText
+                                    anchors.centerIn: parent
+                                    text: model.repoFullName
+                                    color: Kirigami.Theme.textColor
+                                    font.pixelSize: 13
+                                    font.weight: Font.Medium
+                                }
+                            }
+                            Controls.Label {
+                                textFormat: Text.PlainText
+                                text: model.updatedAt !== undefined && !isNaN(model.updatedAt.getTime())
+                                    ? model.updatedAt.toLocaleString(Qt.locale(), Locale.ShortFormat) : ""
+                                opacity: 0.68
+                                font.pixelSize: 12
+                            }
+                            Item { Layout.fillWidth: true }
                         }
                     }
                     Controls.BusyIndicator {

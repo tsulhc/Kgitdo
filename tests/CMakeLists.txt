@@ -107,3 +107,10 @@ target_link_libraries(tst_issuecreate PRIVATE
 )
 add_test(NAME tst_issuecreate COMMAND tst_issuecreate)
 set_tests_properties(tst_issuecreate PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Verify the icon is loadable and rendered without a desktop theme.
+add_executable(tst_appicon tst_appicon.cpp ../src/appicon.qrc)
+target_include_directories(tst_appicon PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_appicon PRIVATE Qt6::Test Qt6::Gui Qt6::Svg)
+add_test(NAME tst_appicon COMMAND tst_appicon)
+set_tests_properties(tst_appicon PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

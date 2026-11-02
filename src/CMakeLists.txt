@@ -79,6 +79,8 @@ ecm_add_qml_module(kgitdo
 
 target_sources(kgitdo PRIVATE
     main.cpp
+    AppIcon.h
+    appicon.qrc
 )
 
 ecm_target_qml_sources(kgitdo SOURCES
@@ -92,6 +94,7 @@ target_link_libraries(kgitdo PRIVATE
     Qt6::Quick
     Qt6::Qml
     Qt6::Gui
+    Qt6::Svg
     Qt6::Network
     Qt6::QuickControls2
     Qt6::Widgets
