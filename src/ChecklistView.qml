@@ -338,12 +338,21 @@ ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 5
                         Controls.Button {
+                            id: issueTitleButton
                             Layout.fillWidth: true
                             flat: true
-                            padding: 0
+                            padding: 2
                             text: model.title
                             font.pixelSize: 17
                             font.bold: true
+                            contentItem: Controls.Label {
+                                textFormat: Text.PlainText
+                                text: issueTitleButton.text
+                                font: issueTitleButton.font
+                                wrapMode: Text.WordWrap
+                                horizontalAlignment: Text.AlignLeft
+                                color: Kirigami.Theme.textColor
+                            }
                             onClicked: checklist.showIssue(model.title, model.body,
                                                            model.repoFullName, model.number,
                                                            model.htmlUrl, model.labels)

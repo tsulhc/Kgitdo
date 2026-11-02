@@ -435,6 +435,15 @@ void AuthSession::persistCurrentTokens()
     m_walletSaving = true;
     m_walletError.clear();
     Q_EMIT walletStateChanged();
+    // A wallet service may never answer: do not leave a silent saving state
+    // indefinitely. Late callbacks remain fenced by attempt/generation.
+    QTimer::singleShot(15000, this, [this, attempt, generation]() {
+        if (attempt == m_attemptId && generation == m_saveGeneration && m_walletSaving) {
+            m_walletSaving = false;
+            m_walletError = QStringLiteral("KWallet is not responding. Unlock it and select Retry saving.");
+            Q_EMIT walletStateChanged();
+        }
+    });
     m_secureStore->saveAsync(stored, [this, attempt, generation](bool saved) {
         if (attempt != m_attemptId || generation != m_saveGeneration || !isAuthenticated()) {
             return;
