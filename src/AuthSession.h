@@ -48,6 +48,8 @@ class AuthSession : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool clientIdConfigured READ clientIdConfigured NOTIFY clientIdChanged)
     Q_PROPERTY(bool volatileSession READ isVolatileSession NOTIFY volatileSessionChanged)
+    Q_PROPERTY(bool walletSaving READ walletSaving NOTIFY walletStateChanged)
+    Q_PROPERTY(QString walletError READ walletError NOTIFY walletStateChanged)
     Q_PROPERTY(bool clearFailed READ clearFailed NOTIFY clearFailedChanged)
     Q_PROPERTY(bool hasSecureStorage READ hasSecureStorage NOTIFY secureStorageChanged)
     Q_PROPERTY(QString clientId READ clientId WRITE setClientId NOTIFY clientIdChanged)
@@ -93,6 +95,8 @@ public:
     QString clientId() const { return m_clientId; }
     bool clientIdConfigured() const { return !m_clientId.isEmpty(); }
     bool isVolatileSession() const { return m_volatileSession; }
+    bool walletSaving() const { return m_walletSaving; }
+    QString walletError() const { return m_walletError; }
     // True when a logout/revocation cleanup could not remove the persisted
     // credentials. The UI offers retryClear() in that state; the flag clears
     // on a successful removal or a fresh successful persist.
@@ -117,6 +121,7 @@ public:
     // Retries removing persisted credentials after a failed cleanup
     // (clearFailed). Clears the warning on success; keeps it otherwise.
     Q_INVOKABLE void retryClear();
+    Q_INVOKABLE void retrySave();
     Q_INVOKABLE void restore();
     Q_INVOKABLE void openVerificationPage();
     Q_INVOKABLE void openManageInstallationsPage();
@@ -140,6 +145,7 @@ Q_SIGNALS:
     void errorMessageChanged();
     void clientIdChanged();
     void volatileSessionChanged();
+    void walletStateChanged();
     void clearFailedChanged();
     void secureStorageChanged();
 
@@ -206,6 +212,9 @@ private:
     QString m_lastPollResult;
 
     bool m_volatileSession = false;
+    bool m_walletSaving = false;
+    QString m_walletError;
+    int m_saveGeneration = 0;
     bool m_clearFailed = false;
     int m_attemptId = 0;
     QTimer *m_pollTimer = nullptr;

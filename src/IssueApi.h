@@ -25,6 +25,13 @@ struct IssueUpdateRequest {
     bool closed = false; // true = close, false = reopen
 };
 
+struct IssueCreateRequest {
+    QString owner;
+    QString repo;
+    QString title;
+    QString body;
+};
+
 // (No Q_OBJECT: no signals; QObject parenting only.)
 class IIssueApi : public QObject
 {
@@ -38,4 +45,12 @@ public:
                               std::function<void(IssueHttpResult)> callback) = 0;
     virtual void updateIssueState(const IssueUpdateRequest &request, const QString &accessToken,
                                   std::function<void(IssueHttpResult)> callback) = 0;
+    // Backwards-compatible default for existing read/update fakes.
+    virtual void createIssue(const IssueCreateRequest &, const QString &,
+                             std::function<void(IssueHttpResult)> callback)
+    {
+        IssueHttpResult result;
+        result.transportError = QStringLiteral("Issue creation is not available.");
+        callback(result);
+    }
 };

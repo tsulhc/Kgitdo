@@ -47,7 +47,9 @@ void AsyncKWalletStore::saveAsync(const StoredTokens &tokens, std::function<void
     QMetaObject::invokeMethod(m_worker, [this, tokens, done = std::move(done)]() mutable {
         KWalletSecureStore store;
         const bool saved = store.save(tokens);
-        QMetaObject::invokeMethod(this, [done = std::move(done), saved]() mutable {
+        const QString stage = saved ? QString() : store.lastSaveFailureStep();
+        QMetaObject::invokeMethod(this, [this, done = std::move(done), saved, stage]() mutable {
+            m_lastSaveFailureStep = stage;
             done(saved);
         }, Qt::QueuedConnection);
     }, Qt::QueuedConnection);

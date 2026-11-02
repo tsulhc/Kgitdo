@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUrl>
 
 namespace
 {
@@ -410,6 +411,70 @@ void GitHubClient::fetchIssues(IssueQuery::View view, IssueQuery::State state, c
     }
     auto *job = new IssueFetchJob(m_api, queries, kinds, token, std::move(callback), this);
     job->start();
+}
+
+GitHubClient::CreateResult GitHubClient::mapCreateResponse(const IssueHttpResult &http)
+{
+    CreateResult result;
+    if (!http.transportError.isEmpty() || http.httpStatus == 0) {
+        result.errorMessage = http.transportError.isEmpty()
+            ? QStringLiteral("Network unavailable; check GitHub before retrying to avoid duplicates.")
+            : http.transportError + QStringLiteral(" Check GitHub before retrying to avoid duplicates.");
+        return result;
+    }
+    if (http.httpStatus == 401) {
+        result.errorMessage = QStringLiteral("Session expired. Sign in again.");
+        return result;
+    }
+    if (http.httpStatus == 403 || http.httpStatus == 404) {
+        result.errorMessage = QStringLiteral("Cannot create an issue here. Check your access and GitHub App installation.");
+        return result;
+    }
+    if (http.httpStatus == 422) {
+        result.errorMessage = QStringLiteral("GitHub rejected the issue. Check its title and repository.");
+        return result;
+    }
+    if (http.httpStatus == 429) {
+        result.errorMessage = QStringLiteral("GitHub rate limit reached. Please retry later.");
+        return result;
+    }
+    if (http.httpStatus != 201) {
+        result.errorMessage = QStringLiteral("Could not confirm issue creation. Check GitHub before retrying.");
+        return result;
+    }
+    const QJsonDocument parsed = QJsonDocument::fromJson(http.body);
+    if (!parsed.isObject()) {
+        result.errorMessage = QStringLiteral("GitHub's reply was incomplete. Check GitHub before retrying.");
+        return result;
+    }
+    const QJsonObject obj = parsed.object();
+    result.number = obj.value(QStringLiteral("number")).toInt();
+    result.title = obj.value(QStringLiteral("title")).toString();
+    result.url = obj.value(QStringLiteral("html_url")).toString();
+    const QUrl safeUrl(result.url);
+    if (result.number <= 0 || safeUrl.scheme() != QLatin1String("https")
+        || safeUrl.host() != QLatin1String("github.com") || safeUrl.port(443) != 443) {
+        result.errorMessage = QStringLiteral("GitHub's reply was incomplete. Check GitHub before retrying.");
+        return result;
+    }
+    result.ok = true;
+    return result;
+}
+
+void GitHubClient::createIssue(const QString &owner, const QString &repo, const QString &title,
+                               const QString &body, const QString &token, CreateCallback callback)
+{
+    if (token.isEmpty() || title.trimmed().isEmpty()
+        || IssueQuery::buildIssueCreateUrl(owner, repo).isEmpty()) {
+        CreateResult result;
+        result.errorMessage = QStringLiteral("Choose a repository and enter an issue title.");
+        callback(result);
+        return;
+    }
+    IssueCreateRequest request{owner, repo, title.trimmed(), body};
+    m_api->createIssue(request, token, [callback = std::move(callback)](const IssueHttpResult &http) {
+        callback(mapCreateResponse(http));
+    });
 }
 
 void GitHubClient::updateIssueState(const QString &owner, const QString &repo, int number, bool closed,

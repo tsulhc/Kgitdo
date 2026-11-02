@@ -85,6 +85,11 @@ QByteArray buildIssueUpdateBody(bool closed);
 // the requested one. False on malformed bodies or unknown states.
 bool parseUpdatedIssueState(const QByteArray &body, QString *stateOut);
 
+// Safe repository-scoped issue creation; rejects malformed paths and
+// encodes user-supplied title/body as JSON (never string interpolation).
+QUrl buildIssueCreateUrl(const QString &owner, const QString &repo);
+QByteArray buildIssueCreateBody(const QString &title, const QString &body);
+
 // True when the search result set cannot be complete: the Search API caps
 // every query at 1.000 results.
 bool isCappedResult(int totalCount, bool hasNextPage, int loadedCount);

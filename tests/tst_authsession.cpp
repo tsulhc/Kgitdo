@@ -254,6 +254,7 @@ private Q_SLOTS:
     void restoreWithoutTokensStaysSignedOut();
     void logoutClearsStoreAndMemory();
     void walletRefusalFallsBackToVolatile();
+    void failedWalletSaveCanRetry();
     void userUnauthorizedClearsSession();
     void missingClientIdFails();
     void networkErrorDuringPollIsRetryable();
@@ -675,6 +676,32 @@ void AuthSessionTest::walletRefusalFallsBackToVolatile()
     session.pollOnce();
     QCOMPARE(session.status(), AuthSession::Authenticated);
     QVERIFY(session.isVolatileSession());
+}
+
+void AuthSessionTest::failedWalletSaveCanRetry()
+{
+    FakeAuthNetwork net;
+    DeferredSecureStore store;
+    AuthSession session(&net, &store);
+    session.setClientId(QStringLiteral("test-client"));
+    net.deviceQueue << FakeAuthNetwork::makeDeviceOk();
+    net.pollQueue << FakeAuthNetwork::makeTokenOk();
+    net.userQueue << FakeAuthNetwork::makeUserOk();
+    session.startLogin();
+    session.pollOnce();
+    QCOMPARE(session.status(), AuthSession::Authenticated);
+    QVERIFY(session.walletSaving());
+    store.pendingSave(false);
+    QVERIFY(!session.walletSaving());
+    QVERIFY(session.isVolatileSession());
+    QVERIFY(session.walletError().contains(QStringLiteral("Retry saving")));
+    session.retrySave();
+    QVERIFY(session.walletSaving());
+    QVERIFY(session.walletError().isEmpty());
+    store.pendingSave(true);
+    QVERIFY(!session.walletSaving());
+    QVERIFY(!session.isVolatileSession());
+    QVERIFY(session.walletError().isEmpty());
 }
 
 void AuthSessionTest::userUnauthorizedClearsSession()

@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QRegularExpression>
 #include <QUrlQuery>
 #include <algorithm>
 
@@ -169,6 +170,7 @@ bool parseSearchPage(const QByteArray &body, QueryKind kind, SearchPage *out)
         }
         issue.number = item.value(QStringLiteral("number")).toInt(0);
         issue.title = item.value(QStringLiteral("title")).toString();
+        issue.body = item.value(QStringLiteral("body")).toString();
         issue.state = item.value(QStringLiteral("state")).toString();
         issue.htmlUrl = item.value(QStringLiteral("html_url")).toString();
         issue.updatedAt = parseUpdatedAt(item.value(QStringLiteral("updated_at")));
@@ -299,6 +301,24 @@ QUrl parseNextLink(const QByteArray &linkHeader)
         return QUrl();
     }
     return raw;
+}
+
+QUrl buildIssueCreateUrl(const QString &owner, const QString &repo)
+{
+    static const QRegularExpression valid(QStringLiteral("^[A-Za-z0-9_.-]+$"));
+    if (!valid.match(owner).hasMatch() || !valid.match(repo).hasMatch()) {
+        return {};
+    }
+    return QUrl(QStringLiteral("https://api.github.com/repos/") + owner
+                + QLatin1Char('/') + repo + QStringLiteral("/issues"));
+}
+
+QByteArray buildIssueCreateBody(const QString &title, const QString &body)
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("title"), title);
+    payload.insert(QStringLiteral("body"), body);
+    return QJsonDocument(payload).toJson(QJsonDocument::Compact);
 }
 
 bool isCappedResult(int totalCount, bool hasNextPage, int loadedCount)

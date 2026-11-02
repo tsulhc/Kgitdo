@@ -98,3 +98,12 @@ target_link_libraries(tst_mainqml_auth PRIVATE
 target_compile_definitions(tst_mainqml_auth PRIVATE KGITDO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME tst_mainqml_auth COMMAND tst_mainqml_auth)
 set_tests_properties(tst_mainqml_auth PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(tst_issuecreate tst_issuecreate.cpp)
+target_link_libraries(tst_issuecreate PRIVATE
+    kgitdoissues
+    kgitdoauth
+    Qt6::Test
+)
+add_test(NAME tst_issuecreate COMMAND tst_issuecreate)
+set_tests_properties(tst_issuecreate PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

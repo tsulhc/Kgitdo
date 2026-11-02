@@ -24,6 +24,9 @@ class IssueController : public QObject
     Q_PROPERTY(IssueListModel *model READ model CONSTANT)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
+    Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY searchTextChanged)
+    Q_PROPERTY(bool creatingIssue READ creatingIssue NOTIFY creationChanged)
+    Q_PROPERTY(QString createError READ createError NOTIFY creationChanged)
     Q_PROPERTY(bool hasWarning READ hasWarning NOTIFY warningChanged)
     Q_PROPERTY(QString warningMessage READ warningMessage NOTIFY warningChanged)
     Q_PROPERTY(bool incompleteResults READ incompleteResults NOTIFY outcomeChanged)
@@ -60,6 +63,9 @@ public:
     IssueListModel *model() const { return m_model; }
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_errorMessage; }
+    QString searchText() const { return m_searchText; }
+    bool creatingIssue() const { return m_creatingIssue; }
+    QString createError() const { return m_createError; }
     bool hasWarning() const { return !m_warningMessage.isEmpty(); }
     QString warningMessage() const { return m_warningMessage; }
     bool incompleteResults() const { return m_incomplete; }
@@ -78,8 +84,10 @@ public:
     void setView(int view);
     void setIssueState(int state);
     void setRepoFilter(const QString &repoFullName);
+    void setSearchText(const QString &value);
 
     Q_INVOKABLE void reload();
+    Q_INVOKABLE void createIssue(const QString &repoFullName, const QString &title, const QString &body);
     Q_INVOKABLE void closeIssue(const QString &issueId);
     Q_INVOKABLE void reopenIssue(const QString &issueId);
     Q_INVOKABLE void undoLastClose();
@@ -92,6 +100,9 @@ Q_SIGNALS:
     void availableReposChanged();
     void loadingChanged();
     void errorMessageChanged();
+    void searchTextChanged();
+    void creationChanged();
+    void issueCreated(const QString &url);
     void warningChanged();
     void outcomeChanged();
     void countsChanged();
@@ -119,6 +130,9 @@ private:
     int m_view = ViewAll;
     int m_issueState = StateOpen;
     QString m_repoFilter;
+    QString m_searchText;
+    bool m_creatingIssue = false;
+    QString m_createError;
     QStringList m_availableRepos;
     QList<Issue> m_loaded;
 

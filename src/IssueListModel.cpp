@@ -32,6 +32,8 @@ QVariant IssueListModel::data(const QModelIndex &index, int role) const
         return issue.qualifiedNumber();
     case TitleRole:
         return issue.title;
+    case BodyRole:
+        return issue.body;
     case StateRole:
         return issue.state;
     case LabelsRole:
@@ -61,6 +63,7 @@ QHash<int, QByteArray> IssueListModel::roleNames() const
         {NumberRole, "number"},
         {QualifiedNumberRole, "qualifiedNumber"},
         {TitleRole, "title"},
+        {BodyRole, "body"},
         {StateRole, "state"},
         {LabelsRole, "labels"},
         {HtmlUrlRole, "htmlUrl"},
