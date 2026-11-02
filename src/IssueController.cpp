@@ -136,6 +136,16 @@ void IssueController::createIssue(const QString &repoFullName, const QString &ti
         }
         Q_EMIT creationChanged();
         if (result.ok) {
+            // The new issue may not be assigned; show Created/Open instead
+            // of leaving the user in an unrelated filtered inbox.
+            if (m_view == ViewAssigned) {
+                m_view = ViewCreated;
+                Q_EMIT viewChanged();
+            }
+            if (m_issueState != StateOpen) {
+                m_issueState = StateOpen;
+                Q_EMIT issueStateChanged();
+            }
             Q_EMIT issueCreated(result.url);
             if (!m_loading) {
                 reload();

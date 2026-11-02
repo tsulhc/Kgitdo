@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUrl>
 
 namespace
 {
@@ -450,7 +451,9 @@ GitHubClient::CreateResult GitHubClient::mapCreateResponse(const IssueHttpResult
     result.number = obj.value(QStringLiteral("number")).toInt();
     result.title = obj.value(QStringLiteral("title")).toString();
     result.url = obj.value(QStringLiteral("html_url")).toString();
-    if (result.number <= 0 || !result.url.startsWith(QStringLiteral("https://github.com/"))) {
+    const QUrl safeUrl(result.url);
+    if (result.number <= 0 || safeUrl.scheme() != QLatin1String("https")
+        || safeUrl.host() != QLatin1String("github.com") || safeUrl.port(443) != 443) {
         result.errorMessage = QStringLiteral("GitHub's reply was incomplete. Check GitHub before retrying.");
         return result;
     }

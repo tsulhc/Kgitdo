@@ -110,6 +110,14 @@ ColumnLayout {
                     onClicked: authSession.logout()
                 }
             }
+            Controls.Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                visible: checklist.creationNotice.length > 0
+                color: Kirigami.Theme.positiveTextColor
+                text: checklist.creationNotice
+                font.pixelSize: 14
+            }
             RowLayout {
                 Layout.fillWidth: true
                 visible: authSession.volatileSession
@@ -597,12 +605,6 @@ ColumnLayout {
             checklist.creationNotice = i18n("Issue created successfully.")
         }
     }
-    Controls.Label {
-        textFormat: Text.PlainText
-        Layout.fillWidth: true
-        visible: checklist.creationNotice.length > 0
-        text: checklist.creationNotice
-        Accessible.name: text
-    }
+
 
 }
