@@ -15,7 +15,7 @@
 #include "GitHubAppConfig.h"
 #include "GitHubClient.h"
 #include "IssueController.h"
-#include "KWalletSecureStore.h"
+#include "AsyncKWalletStore.h"
 #include "QNetworkAuthTransport.h"
 #include "QNetworkIssueApi.h"
 
@@ -44,7 +44,7 @@ int main(int argc, char *argv[])
     }
 
     auto *network = new QNetworkAuthTransport(&app);
-    auto *store = new KWalletSecureStore(&app);
+    auto *store = new AsyncKWalletStore(&app);
     auto *authSession = new AuthSession(network, store, &app);
     authSession->setClientId(GitHubAppConfig::effectiveClientId());
 
