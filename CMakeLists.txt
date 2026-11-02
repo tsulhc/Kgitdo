@@ -27,6 +27,7 @@ include(FeatureSummary)
 find_package(Qt6 REQUIRED COMPONENTS
     Core
     Gui
+    Svg
     Network
     Qml
     Quick

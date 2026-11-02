@@ -16,8 +16,21 @@ private Q_SLOTS:
         // custom contentItem label for the issue title.
         QVERIFY(qml.contains(QStringLiteral("objectName: \"issueTitleLabel\"")));
         QVERIFY(!qml.contains(QStringLiteral("id: issueTitleButton")));
-        QVERIFY(qml.contains(QStringLiteral("text: model.title")));
+        QVERIFY(qml.contains(QStringLiteral("text: \"#\" + model.number + \"  \" + model.title")));
         QVERIFY(qml.contains(QStringLiteral("textFormat: Text.PlainText")));
+    }
+
+    void responsiveIssueHeaderAndPlasmaColors()
+    {
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        QVERIFY(qml.contains(QStringLiteral("id: titleAndLabels")));
+        QVERIFY(qml.contains(QStringLiteral("width: Math.min(implicitWidth, titleAndLabels.width)")));
+        QVERIFY(qml.contains(QStringLiteral("color: Kirigami.Theme.textColor")));
+        QVERIFY(qml.contains(QStringLiteral("Kirigami.Theme.highlightColor")));
+        QVERIFY(!qml.contains(QStringLiteral("color: \"#253a4a\"")));
+        QVERIFY(!qml.contains(QStringLiteral("color: \"#d2eaff\"")));
     }
 
     void externalIssueTextIsAlwaysPlainText()
