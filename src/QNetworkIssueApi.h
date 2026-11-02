@@ -26,6 +26,9 @@ private:
     void updateIssueState(const IssueUpdateRequest &request, const QString &accessToken,
                           std::function<void(IssueHttpResult)> callback) override;
 
+    void createIssue(const IssueCreateRequest &request, const QString &accessToken,
+                     std::function<void(IssueHttpResult)> callback) override;
+
     void startJsonRequest(const QByteArray &verb, const QNetworkRequest &request, const QByteArray &body,
                           std::function<void(IssueHttpResult)> callback);
 

@@ -19,6 +19,7 @@ public:
         NumberRole,
         QualifiedNumberRole,
         TitleRole,
+        BodyRole,
         StateRole,
         LabelsRole,
         HtmlUrlRole,

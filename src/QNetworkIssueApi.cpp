@@ -54,6 +54,22 @@ void QNetworkIssueApi::updateIssueState(const IssueUpdateRequest &request, const
                      std::move(callback));
 }
 
+void QNetworkIssueApi::createIssue(const IssueCreateRequest &request, const QString &accessToken,
+                                    std::function<void(IssueHttpResult)> callback)
+{
+    const QUrl url = IssueQuery::buildIssueCreateUrl(request.owner, request.repo);
+    if (!url.isValid() || url.isEmpty() || request.title.trimmed().isEmpty()) {
+        IssueHttpResult result;
+        result.transportError = QStringLiteral("Choose a valid repository and enter a title.");
+        callback(result);
+        return;
+    }
+    QNetworkRequest apiRequest = makeApiRequest(url, accessToken);
+    apiRequest.setRawHeader("Content-Type", "application/json");
+    startJsonRequest("POST", apiRequest, IssueQuery::buildIssueCreateBody(request.title, request.body),
+                     std::move(callback));
+}
+
 void QNetworkIssueApi::startJsonRequest(const QByteArray &verb, const QNetworkRequest &request,
                                         const QByteArray &body,
                                         std::function<void(IssueHttpResult)> callback)

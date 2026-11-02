@@ -14,6 +14,7 @@ struct Issue {
     QString repo;
     int number = 0;
     QString title;
+    QString body; // Markdown source; rendered as plain text inside the app
     QString state; // "open" or "closed"
     QStringList labels;
     QString htmlUrl;

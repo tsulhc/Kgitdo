@@ -83,6 +83,67 @@ void IssueController::setRepoFilter(const QString &repoFullName)
     applyRepoFilter();
 }
 
+void IssueController::setSearchText(const QString &value)
+{
+    const QString trimmed = value.trimmed();
+    if (trimmed == m_searchText) {
+        return;
+    }
+    m_searchText = trimmed;
+    Q_EMIT searchTextChanged();
+    applyRepoFilter();
+}
+
+void IssueController::createIssue(const QString &repoFullName, const QString &title, const QString &body)
+{
+    if (m_creatingIssue) {
+        return; // Exactly one POST per submit; never replay automatically.
+    }
+    m_createError.clear();
+    if (!m_auth || !m_client || !m_auth->isAuthenticated() || m_auth->pending()
+        || m_auth->currentAccessToken().isEmpty()) {
+        m_createError = QStringLiteral("Sign in before creating an issue.");
+    } else if (!m_availableRepos.contains(repoFullName)) {
+        m_createError = QStringLiteral("Select a repository from your issue list.");
+    } else if (title.trimmed().isEmpty() || title.size() > 256 || body.size() > 65536) {
+        m_createError = QStringLiteral("Enter a title (up to 256 characters) and a shorter description.");
+    } else if (!m_auth->ensureFreshAccessToken()) {
+        m_createError = QStringLiteral("Refresh your session, then submit again.");
+    }
+    if (!m_createError.isEmpty()) {
+        Q_EMIT creationChanged();
+        return;
+    }
+    const QStringList parts = repoFullName.split(QLatin1Char('/'));
+    if (parts.size() != 2) {
+        m_createError = QStringLiteral("Invalid repository.");
+        Q_EMIT creationChanged();
+        return;
+    }
+    m_creatingIssue = true;
+    Q_EMIT creationChanged();
+    const int account = m_accountGeneration;
+    m_client->createIssue(parts[0], parts[1], title, body, m_auth->currentAccessToken(),
+                          [this, account](const GitHubClient::CreateResult &result) {
+        if (account != m_accountGeneration) {
+            return;
+        }
+        m_creatingIssue = false;
+        if (!result.ok) {
+            m_createError = result.errorMessage;
+        } else {
+            m_createError.clear();
+        }
+        Q_EMIT creationChanged();
+        if (result.ok) {
+            Q_EMIT issueCreated(result.url);
+            if (!m_loading) {
+                reload();
+            }
+        }
+    });
+}
+
 void IssueController::reload()
 {
     if (m_loading || !m_client) {
@@ -249,17 +310,20 @@ void IssueController::setLoading(bool loading)
 
 void IssueController::applyRepoFilter()
 {
-    if (m_repoFilter.isEmpty()) {
-        m_model->setIssues(m_loaded);
-    } else {
-        QList<Issue> filtered;
-        for (const Issue &issue : m_loaded) {
-            if (issue.repoFullName() == m_repoFilter) {
-                filtered.append(issue);
-            }
+    QList<Issue> filtered;
+    for (const Issue &issue : m_loaded) {
+        if (!m_repoFilter.isEmpty() && issue.repoFullName() != m_repoFilter) {
+            continue;
         }
-        m_model->setIssues(filtered);
+        if (!m_searchText.isEmpty()
+            && !issue.title.contains(m_searchText, Qt::CaseInsensitive)
+            && !issue.repoFullName().contains(m_searchText, Qt::CaseInsensitive)
+            && !issue.labels.join(QLatin1Char(' ')).contains(m_searchText, Qt::CaseInsensitive)) {
+            continue;
+        }
+        filtered.append(issue);
     }
+    m_model->setIssues(filtered);
     Q_EMIT countsChanged();
 }
 
@@ -563,12 +627,19 @@ void IssueController::clearAllState()
     ++m_generation;
     ++m_accountGeneration; // mutations in flight belong to the old account
     m_reloadAfterRefresh = false;
+    m_creatingIssue = false;
+    m_createError.clear();
+    Q_EMIT creationChanged();
     m_mutationGuard.clear(); // outstanding PATCHes are fenced: their guard dies here
     setLoading(false);
     m_loaded.clear();
     m_model->setIssues({});
     m_availableRepos.clear();
     Q_EMIT availableReposChanged();
+    if (!m_searchText.isEmpty()) {
+        m_searchText.clear();
+        Q_EMIT searchTextChanged();
+    }
     // A leftover filter would silently hide the next account's issues
     // after re-login, so reset it and notify observers.
     if (!m_repoFilter.isEmpty()) {

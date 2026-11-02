@@ -63,12 +63,25 @@ public:
     // covered by unit tests with synthetic responses.
     static UpdateResult mapUpdateResponse(const IssueHttpResult &http, bool expectClosed);
 
+    struct CreateResult {
+        bool ok = false;
+        int number = 0;
+        QString url;
+        QString title;
+        QString errorMessage;
+    };
+    static CreateResult mapCreateResponse(const IssueHttpResult &http);
+
     explicit GitHubClient(IIssueApi *api, QObject *parent = nullptr);
 
     // view/state select the queries; token is the W1 Bearer token, login
     // the signed-in user. The callback always fires exactly once.
     void fetchIssues(IssueQuery::View view, IssueQuery::State state, const QString &token,
                      const QString &login, FetchCallback callback);
+
+    using CreateCallback = std::function<void(CreateResult)>;
+    void createIssue(const QString &owner, const QString &repo, const QString &title,
+                     const QString &body, const QString &token, CreateCallback callback);
 
     using UpdateCallback = std::function<void(UpdateResult)>;
 
