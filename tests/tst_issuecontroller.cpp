@@ -189,12 +189,13 @@ public:
 namespace
 {
 QByteArray itemJson(qlonglong id, int number, const char *title, const char *repo,
-                    const char *updated = "2026-10-01T10:00:00Z")
+                    const char *updated = "2026-10-01T10:00:00Z", const char *label = nullptr)
 {
     return QByteArray("{\"id\":") + QByteArray::number(id) + ",\"number\":" + QByteArray::number(number)
         + ",\"title\":\"" + title + "\",\"state\":\"open\",\"html_url\":\"https://github.com/" + repo
         + "/issues/" + QByteArray::number(number) + "\",\"updated_at\":\"" + updated + "\","
-        + "\"repository_url\":\"https://api.github.com/repos/" + repo + "\",\"labels\":[]}";
+        + "\"repository_url\":\"https://api.github.com/repos/" + repo + "\",\"labels\":"
+        + (label ? QByteArray("[{\"name\":\"") + label + "\"}]" : QByteArray("[]")) + "}";
 }
 
 QByteArray pageJson(std::initializer_list<QByteArray> items, bool incomplete = false)
@@ -309,6 +310,10 @@ private Q_SLOTS:
     void viewChangeReloadsSingleQuery();
     void stateChangeReloads();
     void repoFilterIsClientSide();
+    void labelFilterIsClientSideAndAvailableLabelsAreSorted();
+    void labelFilterCombinesWithRepoAndPreservesExactName();
+    void labelFilterPersistsAcrossReloadAndUnknownChoice();
+    void labelFilterKeepsPendingMutationAndUndoLabels();
     void unknownRepoShowsEmptyButKeepsLoaded();
     void errorPropagates();
     void unauthorizedMessage();
@@ -323,6 +328,7 @@ private Q_SLOTS:
     void logoutMidLoadDiscardsResult();
     void logoutClearsList();
     void logoutClearsRepoFilter();
+    void logoutClearsLabelFilter();
     void refreshPreservesIssues();
     void reloginAsDifferentUserClearsAndReloads();
     void signedOutReloadErrors();
@@ -439,6 +445,108 @@ void IssueControllerTest::repoFilterIsClientSide()
     QCOMPARE(api.requestedUrls.size(), 2); // no refetch
     controller.setRepoFilter(QString());
     QCOMPARE(controller.visibleCount(), 2);
+}
+
+void IssueControllerTest::labelFilterIsClientSideAndAvailableLabelsAreSorted()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r", "2026-10-01T10:00:00Z", "zeta"),
+                                      itemJson(2, 2, "B", "o/other", "2026-10-01T10:00:00Z", "Alpha"),
+                                      itemJson(3, 3, "C", "o/r", "2026-10-01T10:00:00Z", "ALPHA")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    QCOMPARE(controller.availableLabels(), QStringList({QStringLiteral("Alpha"), QStringLiteral("zeta")}));
+    const int requests = api.requestedUrls.size();
+    controller.setLabelFilter(QStringLiteral("alpha"));
+    QCOMPARE(controller.visibleCount(), 2);
+    QCOMPARE(controller.loadedCount(), 3);
+    QCOMPARE(api.requestedUrls.size(), requests);
+    controller.setLabelFilter(QString());
+    QCOMPARE(controller.visibleCount(), 3);
+}
+
+void IssueControllerTest::labelFilterCombinesWithRepoAndPreservesExactName()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r", "2026-10-01T10:00:00Z", " Bug "),
+                                      itemJson(2, 2, "B", "o/other", "2026-10-01T10:00:00Z", " bug "),
+                                      itemJson(3, 3, "C", "o/r", "2026-10-01T10:00:00Z", "other")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.setRepoFilter(QStringLiteral("o/r"));
+    controller.setLabelFilter(QStringLiteral(" Bug "));
+    QCOMPARE(controller.labelFilter(), QStringLiteral(" Bug "));
+    QCOMPARE(controller.visibleCount(), 1);
+    controller.setLabelFilter(QString());
+    QCOMPARE(controller.visibleCount(), 2); // repo filter remains active
+    controller.setLabelFilter(QStringLiteral(" Bug "));
+    QCOMPARE(controller.visibleCount(), 1);
+    controller.setRepoFilter(QString());
+    QCOMPARE(controller.visibleCount(), 2);
+    controller.setLabelFilter(QStringLiteral("stale"));
+    QCOMPARE(controller.visibleCount(), 0);
+    QCOMPARE(controller.loadedCount(), 3);
+}
+
+void IssueControllerTest::labelFilterPersistsAcrossReloadAndUnknownChoice()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r", "2026-10-01T10:00:00Z", "bug")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.queue.append(httpOk(pageJson({itemJson(2, 2, "B", "o/r", "2026-10-01T10:00:00Z", "docs")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.setLabelFilter(QStringLiteral("bug"));
+    controller.setView(IssueController::ViewAssigned);
+    QCOMPARE(controller.labelFilter(), QStringLiteral("bug"));
+    QCOMPARE(controller.visibleCount(), 0);
+    QCOMPARE(controller.availableLabels(), QStringList({QStringLiteral("docs")}));
+    controller.setLabelFilter(QStringLiteral("stale"));
+    controller.reload();
+    QCOMPARE(controller.labelFilter(), QStringLiteral("stale"));
+    QCOMPARE(controller.visibleCount(), 0);
+}
+
+void IssueControllerTest::labelFilterKeepsPendingMutationAndUndoLabels()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r", "2026-10-01T10:00:00Z", "bug")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.deferUpdate = true;
+    api.updateQueue.append(httpUpdate("closed"));
+    api.updateQueue.append(httpUpdate("open"));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.setLabelFilter(QStringLiteral("BUG"));
+    const QString id = rowId(controller, 0);
+    controller.closeIssue(id);
+    controller.setLabelFilter(QStringLiteral("bug"));
+    QCOMPARE(controller.model()->data(controller.model()->index(0), IssueListModel::PendingRole).toBool(), true);
+    controller.closeIssue(id);
+    QCOMPARE(api.updateRequests.size(), 1);
+    api.fireUpdates();
+    QCOMPARE(controller.visibleCount(), 0);
+    QVERIFY(controller.canUndoClose());
+    QCOMPARE(controller.availableLabels(), QStringList());
+    controller.undoLastClose();
+    QCOMPARE(controller.visibleCount(), 0); // undo PATCH is still in flight
+    QVERIFY(controller.undoInFlightForTesting());
+    api.fireUpdates();
+    QCOMPARE(controller.visibleCount(), 1);
+    QCOMPARE(controller.availableLabels(), QStringList({QStringLiteral("bug")}));
+    QCOMPARE(controller.labelFilter(), QStringLiteral("bug"));
 }
 
 void IssueControllerTest::unknownRepoShowsEmptyButKeepsLoaded()
@@ -977,6 +1085,22 @@ void IssueControllerTest::logoutClearsRepoFilter()
     QCOMPARE(controller.visibleCount(), 0);
 }
 
+void IssueControllerTest::logoutClearsLabelFilter()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r", "2026-10-01T10:00:00Z", "bug")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.setLabelFilter(QStringLiteral("bug"));
+    QCOMPARE(controller.availableLabels(), QStringList({QStringLiteral("bug")}));
+    auth->logout();
+    QVERIFY(controller.labelFilter().isEmpty());
+    QVERIFY(controller.availableLabels().isEmpty());
+}
+
 void IssueControllerTest::refreshPreservesIssues()
 {
     // A token refresh is transient: neither the Refreshing state nor the
@@ -1033,7 +1157,7 @@ void IssueControllerTest::reloginAsDifferentUserClearsAndReloads()
     // intermediate sign-out must drop the prior account's issues and load
     // the new account's — never show alice's tasks to bob.
     FakeIssueApi api;
-    api.queue.append(httpOk(pageJson({itemJson(1, 7, "AliceIssue", "o/r")})));
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "AliceIssue", "o/r", "2026-10-01T10:00:00Z", "alice-label")})));
     api.queue.append(httpOk(pageJson({})));
     GitHubClient client(&api);
     auto *network = new TinyAuthNetwork(this);
@@ -1054,6 +1178,7 @@ void IssueControllerTest::reloginAsDifferentUserClearsAndReloads()
     IssueController controller(auth, &client);
     controller.reload();
     QCOMPARE(controller.loadedCount(), 1);
+    controller.setLabelFilter(QStringLiteral("alice-label"));
     // Refresh fails but the session (and the list) survives it.
     IAuthNetwork::TokenResult refreshFail;
     refreshFail.ok = false;
@@ -1062,6 +1187,7 @@ void IssueControllerTest::reloginAsDifferentUserClearsAndReloads()
     auth->refreshSession();
     QCOMPARE(auth->status(), AuthSession::Failed);
     QCOMPARE(controller.loadedCount(), 1);
+    QCOMPARE(controller.labelFilter(), QStringLiteral("alice-label"));
     // Fresh device flow authenticating bob; bob's issues are queued behind
     // alice's (ViewAll runs the Authored then Assigned query).
     IAuthNetwork::DeviceCodeResult device;
@@ -1094,6 +1220,8 @@ void IssueControllerTest::reloginAsDifferentUserClearsAndReloads()
     QCOMPARE(auth->userLogin(), QStringLiteral("bob"));
     // The controller cleared alice's state and reloaded for bob.
     QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.labelFilter().isEmpty());
+    QVERIFY(!controller.availableLabels().contains(QStringLiteral("alice-label")));
     QCOMPARE(controller.model()
                  ->data(controller.model()->index(0), IssueListModel::TitleRole)
                  .toString(),

@@ -83,6 +83,16 @@ void IssueController::setRepoFilter(const QString &repoFullName)
     applyRepoFilter();
 }
 
+void IssueController::setLabelFilter(const QString &label)
+{
+    if (label == m_labelFilter) {
+        return;
+    }
+    m_labelFilter = label;
+    Q_EMIT labelFilterChanged();
+    applyRepoFilter();
+}
+
 void IssueController::setSearchText(const QString &value)
 {
     const QString trimmed = value.trimmed();
@@ -273,6 +283,7 @@ void IssueController::reload()
                               m_availableRepos = QStringList(repos.begin(), repos.end());
                               m_availableRepos.sort();
                               Q_EMIT availableReposChanged();
+                              updateAvailableLabels();
                               // Keep a repo filter that no longer matches
                               // anything (stale after reload) visible as an
                               // explicit empty choice rather than silently
@@ -331,10 +342,48 @@ void IssueController::applyRepoFilter()
             && !issue.labels.join(QLatin1Char(' ')).contains(m_searchText, Qt::CaseInsensitive)) {
             continue;
         }
+        if (!m_labelFilter.isEmpty()) {
+            bool hasLabel = false;
+            for (const QString &label : issue.labels) {
+                if (label.compare(m_labelFilter, Qt::CaseInsensitive) == 0) {
+                    hasLabel = true;
+                    break;
+                }
+            }
+            if (!hasLabel) {
+                continue;
+            }
+        }
         filtered.append(issue);
     }
     m_model->setIssues(filtered);
+    for (const qlonglong guarded : m_mutationGuard) {
+        m_model->setIssuePending(guarded, true);
+    }
     Q_EMIT countsChanged();
+}
+
+void IssueController::updateAvailableLabels()
+{
+    QStringList labels;
+    QSet<QString> seen;
+    for (const Issue &issue : m_loaded) {
+        for (const QString &label : issue.labels) {
+            const QString key = label.toCaseFolded();
+            if (!label.isEmpty() && !seen.contains(key)) {
+                seen.insert(key);
+                labels.append(label);
+            }
+        }
+    }
+    std::sort(labels.begin(), labels.end(), [](const QString &a, const QString &b) {
+        const int insensitive = QString::compare(a, b, Qt::CaseInsensitive);
+        return insensitive == 0 ? a < b : insensitive < 0;
+    });
+    if (labels != m_availableLabels) {
+        m_availableLabels = labels;
+        Q_EMIT availableLabelsChanged();
+    }
 }
 
 void IssueController::clearOutcomeFlags()
@@ -425,6 +474,7 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
         // Assigned/Created view would always look out of scope.
         target.isAssignedToMe = m_undo.isAssignedToMe;
         target.isAuthoredByMe = m_undo.isAuthoredByMe;
+        target.labels = m_undo.labels;
         targetNumber = target.qualifiedNumber();
         m_undoInFlight = true;
     } else {
@@ -543,6 +593,7 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 m_undo.number = target.number;
                 m_undo.isAssignedToMe = target.isAssignedToMe;
                 m_undo.isAuthoredByMe = target.isAuthoredByMe;
+                m_undo.labels = target.labels;
                 m_undoMessage = QStringLiteral("Closed %1 — undo?").arg(targetNumber);
                 Q_EMIT undoChanged();
             } else if (!closed && isUndo) {
@@ -594,11 +645,13 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                     }
                     return a.updatedAt > b.updatedAt;
                 });
+                updateAvailableLabels();
                 applyRepoFilter();
             } else {
                 const int current = loadedRow(id);
                 if (current >= 0) {
                     m_loaded.removeAt(current);
+                    updateAvailableLabels();
                     m_model->removeIssue(id);
                     Q_EMIT countsChanged();
                 }
@@ -646,6 +699,8 @@ void IssueController::clearAllState()
     m_model->setIssues({});
     m_availableRepos.clear();
     Q_EMIT availableReposChanged();
+    m_availableLabels.clear();
+    Q_EMIT availableLabelsChanged();
     if (!m_searchText.isEmpty()) {
         m_searchText.clear();
         Q_EMIT searchTextChanged();
@@ -655,6 +710,10 @@ void IssueController::clearAllState()
     if (!m_repoFilter.isEmpty()) {
         m_repoFilter.clear();
         Q_EMIT repoFilterChanged();
+    }
+    if (!m_labelFilter.isEmpty()) {
+        m_labelFilter.clear();
+        Q_EMIT labelFilterChanged();
     }
     m_errorMessage.clear();
     Q_EMIT errorMessageChanged();
