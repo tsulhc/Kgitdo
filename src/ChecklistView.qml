@@ -48,6 +48,29 @@ ColumnLayout {
         }
     }
 
+    function clearRepoAndLabelFilters() {
+        issueController.repoFilter = "";
+        issueController.labelFilter = "";
+    }
+
+    function labelFilterIndex() {
+        if (issueController.labelFilter.length === 0) {
+            return 0;
+        }
+        const labels = issueController.availableLabels;
+        for (let i = 0; i < labels.length; ++i) {
+            if (labels[i].toLowerCase() === issueController.labelFilter.toLowerCase()) {
+                return i + 1;
+            }
+        }
+        return labels.length + 1;
+    }
+
+    function toggleLabelFilter(label) {
+        issueController.labelFilter = issueController.labelFilter.toLowerCase() === label.toLowerCase()
+            ? "" : label;
+    }
+
     function emptyStateText() {
         if (issueController.loadedCount > 0) {
             return i18n("No issues match the current filters.");
@@ -204,6 +227,41 @@ ColumnLayout {
                         // Re-selecting the stale entry leaves the filter unchanged.
                     }
                 }
+                Controls.ComboBox {
+                    id: labelFilterCombo
+                    Accessible.name: i18n("Label")
+                    font.pixelSize: 14
+                    property bool staleFilter: issueController.labelFilter.length > 0
+                        && labelFilterIndex() === issueController.availableLabels.length + 1
+                    model: staleFilter
+                        ? [i18n("All labels")].concat(issueController.availableLabels).concat([issueController.labelFilter])
+                        : [i18n("All labels")].concat(issueController.availableLabels)
+                    currentIndex: labelFilterIndex()
+                    onActivated: function (index) {
+                        if (index === 0) {
+                            issueController.labelFilter = "";
+                        } else if (index - 1 < issueController.availableLabels.length) {
+                            issueController.labelFilter = issueController.availableLabels[index - 1];
+                        }
+                    }
+                }
+                Controls.Button {
+                    visible: issueController.repoFilter.length > 0 || issueController.labelFilter.length > 0
+                    text: i18n("Clear filters")
+                    onClicked: checklist.clearRepoAndLabelFilters()
+                    Accessible.name: text
+                    Controls.ToolTip.visible: hovered
+                    Controls.ToolTip.delay: 500
+                    Controls.ToolTip.text: i18n("Clears repository and label filters; view and state stay unchanged.")
+                }
+            }
+            Controls.Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: i18n("Labels from loaded issues")
+                opacity: 0.7
+                Accessible.name: text
             }
             Controls.TextField {
                 Layout.fillWidth: true
@@ -326,7 +384,7 @@ ColumnLayout {
             delegate: Kirigami.AbstractCard {
                 id: issueCard
                 width: ListView.view.width - 8
-                property var rowLabels: model.labels
+                property var issueLabels: model.labels !== undefined ? model.labels : []
                 // A subtle outline, not a second high-contrast card surface.
                 // Theme-derived colors work in both Breeze Light and Dark.
                 background: Rectangle {
@@ -385,22 +443,28 @@ ColumnLayout {
                                 }
                             }
                             Repeater {
-                                model: issueCard.rowLabels
-                                delegate: Rectangle {
-                                    radius: 9
-                                    color: modelData.toLowerCase().includes("bug") ? "#422729"
-                                        : modelData.toLowerCase().includes("upgrade") ? "#403519" : "#263e36"
-                                    border.color: modelData.toLowerCase().includes("bug") ? "#a8575c"
-                                        : modelData.toLowerCase().includes("upgrade") ? "#a88b36" : "#548b74"
-                                    implicitWidth: tagText.implicitWidth + 16
-                                    implicitHeight: tagText.implicitHeight + 7
-                                    Controls.Label {
+                                model: issueCard.issueLabels
+                                delegate: Controls.Button {
+                                    property bool selected: issueController.labelFilter.toLowerCase() === String(modelData).toLowerCase()
+                                    text: String(modelData)
+                                    width: Math.min(implicitWidth, 180)
+                                    height: implicitHeight
+                                    highlighted: selected
+                                    onClicked: checklist.toggleLabelFilter(String(modelData))
+                                    Accessible.name: selected
+                                        ? i18n("Remove label filter %1", String(modelData))
+                                        : i18n("Filter by label %1", String(modelData))
+                                    Controls.ToolTip.visible: hovered
+                                    Controls.ToolTip.delay: 500
+                                    Controls.ToolTip.text: selected
+                                        ? i18n("Active label filter. Click to clear it.")
+                                        : i18n("Click to filter by this label")
+                                    contentItem: Controls.Label {
                                         textFormat: Text.PlainText
-                                        id: tagText
-                                        anchors.centerIn: parent
-                                        text: modelData
-                                        color: "#f3f4f6"
-                                        font.pixelSize: 13
+                                        text: String(modelData)
+                                        elide: Text.ElideRight
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
                                     }
                                 }
                             }
@@ -474,6 +538,13 @@ ColumnLayout {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
             text: checklist.emptyStateText()
+            Accessible.name: text
+        }
+        Controls.Button {
+            Layout.alignment: Qt.AlignHCenter
+            visible: issueController.repoFilter.length > 0 || issueController.labelFilter.length > 0
+            text: i18n("Clear filters")
+            onClicked: checklist.clearRepoAndLabelFilters()
             Accessible.name: text
         }
         Controls.Label {

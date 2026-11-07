@@ -10,7 +10,7 @@
 #include "IssueListModel.h"
 #include "IssueQuery.h"
 
-// Owns the checklist state: view/state/repo filters, loading, the full
+// Owns the checklist state: view/state/repo/label filters, loading, the full
 // loaded set, and the fetch outcome flags. View/state changes reload from
 // GitHub; the repository filter applies client-side to loaded data so a
 // narrow filter is never confused with an empty account.
@@ -21,6 +21,8 @@ class IssueController : public QObject
     Q_PROPERTY(int issueState READ issueState WRITE setIssueState NOTIFY issueStateChanged)
     Q_PROPERTY(QString repoFilter READ repoFilter WRITE setRepoFilter NOTIFY repoFilterChanged)
     Q_PROPERTY(QStringList availableRepos READ availableRepos NOTIFY availableReposChanged)
+    Q_PROPERTY(QString labelFilter READ labelFilter WRITE setLabelFilter NOTIFY labelFilterChanged)
+    Q_PROPERTY(QStringList availableLabels READ availableLabels NOTIFY availableLabelsChanged)
     Q_PROPERTY(IssueListModel *model READ model CONSTANT)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
@@ -60,6 +62,8 @@ public:
     int issueState() const { return m_issueState; }
     QString repoFilter() const { return m_repoFilter; }
     QStringList availableRepos() const { return m_availableRepos; }
+    QString labelFilter() const { return m_labelFilter; }
+    QStringList availableLabels() const { return m_availableLabels; }
     IssueListModel *model() const { return m_model; }
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_errorMessage; }
@@ -84,6 +88,7 @@ public:
     void setView(int view);
     void setIssueState(int state);
     void setRepoFilter(const QString &repoFullName);
+    void setLabelFilter(const QString &label);
     void setSearchText(const QString &value);
 
     Q_INVOKABLE void reload();
@@ -98,6 +103,8 @@ Q_SIGNALS:
     void issueStateChanged();
     void repoFilterChanged();
     void availableReposChanged();
+    void labelFilterChanged();
+    void availableLabelsChanged();
     void loadingChanged();
     void errorMessageChanged();
     void searchTextChanged();
@@ -112,6 +119,7 @@ Q_SIGNALS:
 private:
     void setLoading(bool loading);
     void applyRepoFilter();
+    void updateAvailableLabels();
     void clearOutcomeFlags();
     // Drops every account-derived state (list, repos, filter, messages,
     // outcome flags, refresh stamp, undo snapshot) and invalidates
@@ -134,6 +142,8 @@ private:
     bool m_creatingIssue = false;
     QString m_createError;
     QStringList m_availableRepos;
+    QString m_labelFilter;
+    QStringList m_availableLabels;
     QList<Issue> m_loaded;
 
     bool m_loading = false;
@@ -186,6 +196,7 @@ private:
         // knows which views the issue belongs to.
         bool isAssignedToMe = false;
         bool isAuthoredByMe = false;
+        QStringList labels;
     };
     UndoClose m_undo;
     QString m_undoMessage;

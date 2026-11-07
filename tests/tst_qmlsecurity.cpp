@@ -60,6 +60,23 @@ private Q_SLOTS:
                      qPrintable(QStringLiteral("%1: %2 of %3 labels are plain text").arg(view).arg(guarded).arg(count)));
         }
     }
+
+    void labelFilterHasAccessibleClientSideControls()
+    {
+        // Static QML contract check only; this does not execute Qt Quick.
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        QVERIFY(qml.contains(QStringLiteral("issueController.availableLabels")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.labelFilter")));
+        QVERIFY(qml.contains(QStringLiteral("Labels from loaded issues")));
+        QVERIFY(qml.contains(QStringLiteral("id: issueCard")));
+        QVERIFY(qml.contains(QStringLiteral("model: issueCard.issueLabels")));
+        QVERIFY(qml.contains(QStringLiteral("Controls.ToolTip.visible: hovered")));
+        QVERIFY(qml.contains(QStringLiteral("property bool staleFilter")));
+        QVERIFY(qml.contains(QStringLiteral("Clear filters")));
+        QVERIFY(qml.contains(QStringLiteral("Accessible.name: selected")));
+    }
 };
 
 QTEST_MAIN(QmlSecurityTest)
