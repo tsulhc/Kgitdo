@@ -77,6 +77,21 @@ private Q_SLOTS:
         QVERIFY(qml.contains(QStringLiteral("Clear filters")));
         QVERIFY(qml.contains(QStringLiteral("Accessible.name: selected")));
     }
+
+    void savedFilterTabsHaveAccessiblePlainTextControls()
+    {
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        QVERIFY(qml.contains(QStringLiteral("issueController.savedFilters")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.activeSavedFilter")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.applySavedFilter(index)")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.removeSavedFilter(index)")));
+        QVERIFY(qml.contains(QStringLiteral("Accessible.name: i18n(\"Apply saved filter: %1\"")));
+        QVERIFY(qml.contains(QStringLiteral("Accessible.name: i18n(\"Remove saved filter: %1\"")));
+        QVERIFY(qml.contains(QStringLiteral("Accessible.name: text")));
+        QVERIFY(qml.contains(QStringLiteral("textFormat: Text.PlainText")));
+    }
 };
 
 QTEST_MAIN(QmlSecurityTest)

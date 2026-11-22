@@ -17,6 +17,7 @@
 #include "GitHubAppConfig.h"
 #include "GitHubClient.h"
 #include "IssueController.h"
+#include "SavedFilterStore.h"
 #include "AsyncKWalletStore.h"
 #include "QNetworkAuthTransport.h"
 #include "QNetworkIssueApi.h"
@@ -58,7 +59,8 @@ int main(int argc, char *argv[])
     // checklist view on top of its model and filter properties.
     auto *issueApi = new QNetworkIssueApi(&app);
     auto *gitHubClient = new GitHubClient(issueApi, &app);
-    auto *issueController = new IssueController(authSession, gitHubClient, &app);
+    auto *savedFilterStore = new SavedFilterStore;
+    auto *issueController = new IssueController(authSession, gitHubClient, savedFilterStore, &app);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextObject(new KLocalizedContext(&engine));

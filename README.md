@@ -36,7 +36,7 @@ The first usable version should support:
 1. **GitHub sign-in** using a suitable secure authorization flow.
 2. **Unified to-do list** of open issues **assigned to me** or **created by me**, deduplicated when both apply.
 3. **Useful task context:** issue title, repository, issue number, labels, and a link to the original issue.
-4. **Simple views and filters:** all my issues, assigned to me, created by me, and repository filter.
+4. **Simple views and filters:** all my issues, assigned to me, created by me, repository and label filters, quick search, and persistent saved filter tabs.
 5. **Task completion:** close an issue on GitHub from the app, with a clear indication of success or failure.
 6. **Reopen issues** and refresh the list to reflect remote changes.
 7. **Native KDE desktop experience** with appropriate keyboard navigation, theme support, and accessible controls.
@@ -108,7 +108,7 @@ Security: tokens never live in plain files, logs, QSettings, or CI. `401` (revok
 
 ## Reading issues (search API)
 
-After sign-in the app loads open issues **assigned to you or created by you** across the repositories the GitHub App installation can see, using two `GET /search/issues` queries (`author:<login>` and `assignee:<login>`, `is:issue`, newest first, 100 per page) whose results are merged and deduplicated by stable issue id — an issue from both queries appears exactly once with both provenances. Pull-request entries are never shown. Views (All / Assigned / Created) and Open / Closed reload from GitHub; the repository filter applies to loaded data, with loaded/visible counts, so a narrow filter is never confused with an empty account.
+After sign-in the app loads open issues **assigned to you or created by you** across the repositories the GitHub App installation can see, using two `GET /search/issues` queries (`author:<login>` and `assignee:<login>`, `is:issue`, newest first, 100 per page) whose results are merged and deduplicated by stable issue id — an issue from both queries appears exactly once with both provenances. Pull-request entries are never shown. Views (All / Assigned / Created) and Open / Closed reload from GitHub; repository, label, and text filters apply to loaded data, with loaded/visible counts, so a narrow filter is never confused with an empty account. Save a frequently used client-side filter combination as a tab and click it to reapply without another request; saved tabs are stored separately for each GitHub login.
 
 Partial results are always explicit: the UI warns when GitHub reports `incomplete_results`, when the 1,000-result search cap is hit, or when pagination is interrupted (data loaded so far stays visible). `401` asks for sign-in again; rate limits (`429`/`403` quota, `Retry-After` / `X-RateLimit-Reset`) surface a wait-and-retry warning instead of retrying in a loop.
 

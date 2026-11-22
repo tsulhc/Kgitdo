@@ -71,6 +71,14 @@ ColumnLayout {
             ? "" : label;
     }
 
+    function defaultSavedFilterName() {
+        const parts = [];
+        if (issueController.labelFilter.length > 0) parts.push(issueController.labelFilter);
+        if (issueController.repoFilter.length > 0) parts.push(issueController.repoFilter);
+        if (issueController.searchText.length > 0) parts.push(issueController.searchText);
+        return parts.join(" · ");
+    }
+
     function emptyStateText() {
         if (issueController.loadedCount > 0) {
             return i18n("No issues match the current filters.");
@@ -181,6 +189,61 @@ ColumnLayout {
             Flow {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
+                Controls.Button {
+                    text: i18n("All issues")
+                    checkable: true
+                    checked: issueController.repoFilter.length === 0
+                        && issueController.labelFilter.length === 0 && issueController.searchText.length === 0
+                    onClicked: {
+                        issueController.repoFilter = "";
+                        issueController.labelFilter = "";
+                        issueController.searchText = "";
+                    }
+                    Accessible.name: text
+                    Controls.ToolTip.text: i18n("Clear repository, label and search filters.")
+                    Controls.ToolTip.visible: hovered
+                }
+                Repeater {
+                    model: issueController.savedFilters
+                    delegate: RowLayout {
+                        required property int index
+                        required property var modelData
+                        spacing: 0
+                        Controls.Button {
+                            text: modelData.name
+                            checkable: true
+                            checked: issueController.activeSavedFilter === index
+                            onClicked: issueController.applySavedFilter(index)
+                            Accessible.name: i18n("Apply saved filter: %1", modelData.name)
+                            Controls.ToolTip.text: i18n("Apply saved filter: %1", modelData.name)
+                            Controls.ToolTip.visible: hovered
+                        }
+                        Controls.ToolButton {
+                            text: "×"
+                            onClicked: issueController.removeSavedFilter(index)
+                            Accessible.name: i18n("Remove saved filter: %1", modelData.name)
+                            Controls.ToolTip.text: Accessible.name
+                            Controls.ToolTip.visible: hovered
+                        }
+                    }
+                }
+                Controls.Button {
+                    text: i18n("Save as tab")
+                    enabled: (issueController.repoFilter.length > 0 || issueController.labelFilter.length > 0
+                              || issueController.searchText.length > 0)
+                        && issueController.activeSavedFilter < 0 && issueController.savedFilters.length < 20
+                    onClicked: {
+                        savedFilterName.text = checklist.defaultSavedFilterName();
+                        saveFilterDialog.open();
+                    }
+                    Accessible.name: text
+                    Controls.ToolTip.text: i18n("Save the current client-side filters as a tab.")
+                    Controls.ToolTip.visible: hovered
+                }
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
                 Controls.ComboBox {
                     Accessible.name: i18n("View")
                     model: [i18n("All"), i18n("Assigned to me"), i18n("Created by me")]
@@ -279,6 +342,22 @@ ColumnLayout {
                 opacity: 0.8
                 Accessible.name: text
             }
+        }
+    }
+
+    Controls.Dialog {
+        id: saveFilterDialog
+        title: i18n("Save filter tab")
+        modal: true
+        standardButtons: Controls.DialogButtonBox.Ok | Controls.DialogButtonBox.Cancel
+        onAccepted: issueController.saveCurrentFilters(savedFilterName.text)
+        contentItem: Controls.TextField {
+            id: savedFilterName
+            placeholderText: i18n("Tab name")
+            Accessible.name: i18n("Saved filter tab name")
+            textFormat: Text.PlainText
+            selectByMouse: true
+            maximumLength: 60
         }
     }
 

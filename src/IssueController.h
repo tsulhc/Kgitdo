@@ -4,11 +4,13 @@
 #include <QObject>
 #include <QSet>
 #include <QStringList>
+#include <QVariantList>
 
 #include "AuthSession.h"
 #include "GitHubClient.h"
 #include "IssueListModel.h"
 #include "IssueQuery.h"
+#include "SavedFilterStore.h"
 
 // Owns the checklist state: view/state/repo/label filters, loading, the full
 // loaded set, and the fetch outcome flags. View/state changes reload from
@@ -23,6 +25,8 @@ class IssueController : public QObject
     Q_PROPERTY(QStringList availableRepos READ availableRepos NOTIFY availableReposChanged)
     Q_PROPERTY(QString labelFilter READ labelFilter WRITE setLabelFilter NOTIFY labelFilterChanged)
     Q_PROPERTY(QStringList availableLabels READ availableLabels NOTIFY availableLabelsChanged)
+    Q_PROPERTY(QVariantList savedFilters READ savedFilters NOTIFY savedFiltersChanged)
+    Q_PROPERTY(int activeSavedFilter READ activeSavedFilter NOTIFY activeSavedFilterChanged)
     Q_PROPERTY(IssueListModel *model READ model CONSTANT)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
@@ -57,6 +61,7 @@ public:
     Q_ENUM(IssueState)
 
     explicit IssueController(AuthSession *authSession, GitHubClient *client, QObject *parent = nullptr);
+    IssueController(AuthSession *authSession, GitHubClient *client, SavedFilterStore *store, QObject *parent);
 
     int view() const { return m_view; }
     int issueState() const { return m_issueState; }
@@ -64,6 +69,8 @@ public:
     QStringList availableRepos() const { return m_availableRepos; }
     QString labelFilter() const { return m_labelFilter; }
     QStringList availableLabels() const { return m_availableLabels; }
+    QVariantList savedFilters() const { return m_savedFilters; }
+    int activeSavedFilter() const;
     IssueListModel *model() const { return m_model; }
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_errorMessage; }
@@ -97,6 +104,11 @@ public:
     Q_INVOKABLE void reopenIssue(const QString &issueId);
     Q_INVOKABLE void undoLastClose();
     Q_INVOKABLE void dismissUndo();
+    Q_INVOKABLE bool saveCurrentFilters(const QString &name);
+    Q_INVOKABLE void applySavedFilter(int index);
+    Q_INVOKABLE void removeSavedFilter(int index);
+    Q_INVOKABLE void renameSavedFilter(int index, const QString &name);
+    Q_INVOKABLE void moveSavedFilter(int from, int to);
 
 Q_SIGNALS:
     void viewChanged();
@@ -105,6 +117,8 @@ Q_SIGNALS:
     void availableReposChanged();
     void labelFilterChanged();
     void availableLabelsChanged();
+    void savedFiltersChanged();
+    void activeSavedFilterChanged();
     void loadingChanged();
     void errorMessageChanged();
     void searchTextChanged();
@@ -119,6 +133,11 @@ Q_SIGNALS:
 private:
     void setLoading(bool loading);
     void applyRepoFilter();
+    void setFilterValues(const QString &repo, const QString &label, const QString &search);
+    void loadSavedFilters();
+    void persistSavedFilters();
+    void notifyActiveSavedFilterChanged(int previous);
+    QString defaultSavedFilterName() const;
     void updateAvailableLabels();
     void clearOutcomeFlags();
     // Drops every account-derived state (list, repos, filter, messages,
@@ -144,6 +163,9 @@ private:
     QStringList m_availableRepos;
     QString m_labelFilter;
     QStringList m_availableLabels;
+    SavedFilterStore *m_savedFilterStore = nullptr;
+    QVariantList m_savedFilters;
+    QString m_savedFilterLogin;
     QList<Issue> m_loaded;
 
     bool m_loading = false;

@@ -38,6 +38,8 @@ add_library(kgitdoissues STATIC
     IssueListModel.h
     IssueQuery.cpp
     IssueQuery.h
+    SavedFilterStore.cpp
+    SavedFilterStore.h
     QNetworkIssueApi.cpp
     QNetworkIssueApi.h
 )
