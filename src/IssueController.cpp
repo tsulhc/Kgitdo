@@ -1,7 +1,10 @@
 #include "IssueController.h"
 
 #include <QSet>
+#include <QGuiApplication>
+#include <QLocale>
 #include <QMetaType>
+#include <QSettings>
 #include <QVariantMap>
 #include <QTimer>
 #include <algorithm>
@@ -24,6 +27,23 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
     , m_model(new IssueListModel(this))
     , m_savedFilterStore(store)
 {
+    QSettings settings;
+    m_autoRefreshMinutes = settings.value(QStringLiteral("issues/autoRefreshMinutes"), 5).toInt();
+    if (m_autoRefreshMinutes != 0 && m_autoRefreshMinutes != 2 && m_autoRefreshMinutes != 5
+        && m_autoRefreshMinutes != 15 && m_autoRefreshMinutes != 30) {
+        m_autoRefreshMinutes = 5;
+    }
+    m_autoRefreshTimer.setInterval(60 * 1000);
+    connect(&m_autoRefreshTimer, &QTimer::timeout, this, &IssueController::autoRefreshTick);
+    m_autoRefreshTimer.start();
+    if (auto *guiApp = qobject_cast<QGuiApplication *>(QCoreApplication::instance())) {
+        connect(guiApp, &QGuiApplication::applicationStateChanged, this,
+                [this](Qt::ApplicationState state) {
+            if (state == Qt::ApplicationActive) {
+                handleApplicationActive();
+            }
+        });
+    }
     if (m_auth) {
         // Seed the identity the controller is constructed under: restore()
         // may have completed (and emitted Authenticated) before this
@@ -60,10 +80,13 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
                     reload();
                 } else if (m_reloadAfterRefresh) {
                     m_reloadAfterRefresh = false;
-                    QTimer::singleShot(0, this, [this]() { reload(); });
+                    const bool background = m_reloadAfterRefreshBackground;
+                    m_reloadAfterRefreshBackground = false;
+                    QTimer::singleShot(0, this, [this, background]() { reloadInternal(background); });
                 }
             } else if (m_auth->status() == AuthSession::Failed) {
                 m_reloadAfterRefresh = false;
+                m_reloadAfterRefreshBackground = false;
             }
         });
     }
@@ -416,27 +439,111 @@ void IssueController::createIssue(const QString &repoFullName, const QString &ti
 
 void IssueController::reload()
 {
+    reloadInternal(false);
+}
+
+void IssueController::setAutoRefreshMinutes(int minutes)
+{
+    if (minutes != 0 && minutes != 2 && minutes != 5 && minutes != 15 && minutes != 30) {
+        return;
+    }
+    if (minutes == m_autoRefreshMinutes) {
+        return;
+    }
+    m_autoRefreshMinutes = minutes;
+    QSettings settings;
+    settings.setValue(QStringLiteral("issues/autoRefreshMinutes"), minutes);
+    Q_EMIT autoRefreshMinutesChanged();
+}
+
+bool IssueController::canAutoRefresh() const
+{
+    if (m_autoRefreshMinutes <= 0 || m_autoRefreshPaused || m_loading || m_creatingIssue
+        || m_undoInFlight || !m_mutationGuard.isEmpty() || !m_auth || !m_auth->isAuthenticated()
+        || m_auth->pending() || m_auth->status() != AuthSession::Authenticated) {
+        return false;
+    }
+    if (m_rateLimited && m_rateLimitedAt.isValid()
+        && m_rateLimitedAt.secsTo(QDateTime::currentDateTimeUtc()) < m_retryAfterSecs) {
+        return false;
+    }
+    return true;
+}
+
+void IssueController::autoRefreshTick()
+{
+    if (!canAutoRefresh()) {
+        return;
+    }
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    QDateTime baseline = m_lastRefresh;
+    if (m_lastAutoAttempt.isValid() && (!baseline.isValid() || m_lastAutoAttempt > baseline)) {
+        baseline = m_lastAutoAttempt;
+    }
+    if (baseline.isValid() && baseline.secsTo(now) < m_autoRefreshMinutes * 60) {
+        return;
+    }
+    m_lastAutoAttempt = now;
+    reloadInternal(true);
+}
+
+void IssueController::triggerAutoRefreshForTesting()
+{
+    if (!canAutoRefresh()) {
+        return;
+    }
+    m_lastAutoAttempt = QDateTime::currentDateTimeUtc();
+    reloadInternal(true);
+}
+
+void IssueController::handleApplicationActive()
+{
+    if (m_autoRefreshMinutes > 0 && m_lastRefresh.isValid()
+        && m_lastRefresh.secsTo(QDateTime::currentDateTimeUtc()) >= m_autoRefreshMinutes * 60) {
+        autoRefreshTick();
+    }
+}
+
+void IssueController::triggerApplicationActiveForTesting()
+{
+    if (m_lastRefresh.isValid()) {
+        m_lastRefresh = QDateTime::currentDateTimeUtc().addSecs(-m_autoRefreshMinutes * 60 - 1);
+    }
+    handleApplicationActive();
+}
+
+void IssueController::reloadInternal(bool background)
+{
     if (m_loading || !m_client) {
         return; // Double activation guard: one fetch at a time.
     }
     if (!m_auth || !m_auth->isAuthenticated() || m_auth->userLogin().isEmpty()
         || m_auth->currentAccessToken().isEmpty()) {
+        if (background) {
+            return;
+        }
         m_errorMessage = QStringLiteral("Sign in to load issues.");
         Q_EMIT errorMessageChanged();
         return;
     }
     // Do not issue a request with an expired GitHub App access token.
     m_reloadAfterRefresh = true;
+    m_reloadAfterRefreshBackground = background;
     if (!m_auth->ensureFreshAccessToken()) {
+        if (background) {
+            return;
+        }
         if (m_auth->status() == AuthSession::Refreshing) {
             m_errorMessage = QStringLiteral("Refreshing GitHub session. Issues will reload when ready.");
             Q_EMIT errorMessageChanged();
         } else {
             m_reloadAfterRefresh = false;
+            m_reloadAfterRefreshBackground = false;
         }
         return;
     }
     m_reloadAfterRefresh = false;
+    m_reloadAfterRefreshBackground = false;
     const IssueQuery::View view = m_view == ViewAssigned
         ? IssueQuery::View::Assigned
         : (m_view == ViewCreated ? IssueQuery::View::Created : IssueQuery::View::All);
@@ -447,11 +554,16 @@ void IssueController::reload()
     const int viewAtStart = m_view;
     const int stateAtStart = m_issueState;
     const int generation = ++m_generation;
+    if (background) {
+        Q_EMIT backgroundRefreshStarted();
+    }
     setLoading(true);
-    m_errorMessage.clear();
-    Q_EMIT errorMessageChanged();
+    if (!background) {
+        m_errorMessage.clear();
+        Q_EMIT errorMessageChanged();
+    }
     m_client->fetchIssues(view, state, token, login,
-                          [this, viewAtStart, stateAtStart, generation](
+                          [this, viewAtStart, stateAtStart, generation, background](
                               const GitHubClient::FetchResult &result) {
                               if (generation != m_generation) {
                                   // Superseded by logout (or a newer fetch):
@@ -463,7 +575,10 @@ void IssueController::reload()
                                   // Selection changed mid-load: this data
                                   // belongs to the old selection. Discard it
                                   // and fetch once for the current one.
-                                  reload();
+                                  reloadInternal(background);
+                                  if (background) {
+                                      Q_EMIT backgroundRefreshFinished();
+                                  }
                                   return;
                               }
                               if (!result.ok) {
@@ -487,10 +602,25 @@ void IssueController::reload()
                                   if (result.rateLimited) {
                                       m_rateLimited = true;
                                       m_retryAfterSecs = result.retryAfterSecs;
+                                      m_rateLimitedAt = QDateTime::currentDateTimeUtc();
                                       // Fetch-owned outcome (see below).
                                       m_rateLimitedMutationId = 0;
                                   }
                                   Q_EMIT outcomeChanged();
+                                  if (background) {
+                                      const QString reason = result.errorMessage.isEmpty()
+                                          ? QStringLiteral("Could not load issues. Please retry.")
+                                          : result.errorMessage;
+                                      const QString lastUpdated = m_lastRefresh.isValid()
+                                          ? m_lastRefresh.toLocalTime().toString(QLocale().timeFormat(QLocale::ShortFormat))
+                                          : QStringLiteral("never");
+                                      m_warningMessage = QStringLiteral("Automatic refresh failed: %1. Showing issues from %2.")
+                                          .arg(reason, lastUpdated);
+                                      m_warningOwnerId = 0;
+                                      Q_EMIT warningChanged();
+                                      Q_EMIT backgroundRefreshFinished();
+                                      return;
+                                  }
                                   m_warningMessage.clear();
                                   m_warningOwnerId = 0;
                                   Q_EMIT warningChanged();
@@ -499,6 +629,10 @@ void IssueController::reload()
                                       : result.errorMessage;
                                   Q_EMIT errorMessageChanged();
                                   return;
+                              }
+                              if (background && !m_errorMessage.isEmpty()) {
+                                  m_errorMessage.clear();
+                                  Q_EMIT errorMessageChanged();
                               }
                               m_incomplete = result.incomplete;
                               m_capped = result.capped;
@@ -509,6 +643,7 @@ void IssueController::reload()
                                   // partial list).
                                   m_rateLimited = true;
                                   m_retryAfterSecs = result.retryAfterSecs;
+                                  m_rateLimitedAt = QDateTime::currentDateTimeUtc();
                                   // Fetch-owned outcome: a later mutation
                                   // success must not retire it (partial-list
                                   // or load warnings stay until the next
@@ -552,6 +687,7 @@ void IssueController::reload()
                                   m_auth->refreshSession(); // Partial pages may have returned 401.
                               }
                               m_lastRefresh = QDateTime::currentDateTimeUtc();
+                              m_rateLimitedAt = m_rateLimited ? m_rateLimitedAt : QDateTime();
                               Q_EMIT lastRefreshChanged();
                               if (!result.errorMessage.isEmpty()) {
                                   // Partial data: list what loaded, warn.
@@ -567,6 +703,9 @@ void IssueController::reload()
                               // Fetch-owned in every sub-branch above.
                               m_warningOwnerId = 0;
                               Q_EMIT warningChanged();
+                              if (background) {
+                                  Q_EMIT backgroundRefreshFinished();
+                              }
                           });
 }
 
@@ -643,6 +782,7 @@ void IssueController::clearOutcomeFlags()
     m_truncated = false;
     m_rateLimited = false;
     m_retryAfterSecs = 0;
+    m_rateLimitedAt = QDateTime();
     m_rateLimitedMutationId = 0;
     m_warningOwnerId = 0;
     Q_EMIT outcomeChanged();
@@ -785,6 +925,7 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 if (result.rateLimited) {
                     m_rateLimited = true;
                     m_retryAfterSecs = result.retryAfterSecs;
+                    m_rateLimitedAt = QDateTime::currentDateTimeUtc();
                     // This mutation owns the outcome it just set: a later
                     // success retires it only when it is the same
                     // mutation's retry.
@@ -823,6 +964,7 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 m_rateLimited = false;
                 m_retryAfterSecs = 0;
                 m_rateLimitedMutationId = 0;
+                m_rateLimitedAt = QDateTime();
                 Q_EMIT outcomeChanged();
             }
             // Clear the warning only when this mutation also owns it: a
@@ -951,6 +1093,7 @@ void IssueController::clearAllState()
     ++m_generation;
     ++m_accountGeneration; // mutations in flight belong to the old account
     m_reloadAfterRefresh = false;
+    m_reloadAfterRefreshBackground = false;
     m_creatingIssue = false;
     m_createError.clear();
     Q_EMIT creationChanged();
@@ -982,6 +1125,8 @@ void IssueController::clearAllState()
     Q_EMIT warningChanged();
     clearOutcomeFlags();
     m_lastRefresh = QDateTime();
+    m_lastAutoAttempt = QDateTime();
+    m_rateLimitedAt = QDateTime();
     Q_EMIT lastRefreshChanged();
     clearUndo();
     Q_EMIT countsChanged();

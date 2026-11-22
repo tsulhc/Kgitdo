@@ -112,6 +112,8 @@ After sign-in the app loads open issues **assigned to you or created by you** ac
 
 Partial results are always explicit: the UI warns when GitHub reports `incomplete_results`, when the 1,000-result search cap is hit, or when pagination is interrupted (data loaded so far stays visible). `401` asks for sign-in again; rate limits (`429`/`403` quota, `Retry-After` / `X-RateLimit-Reset`) surface a wait-and-retry warning instead of retrying in a loop.
 
+Automatic refresh can be set to Off, 2, 5, 15, or 30 minutes (5 minutes by default) from the checklist header. It polls while the app is open, skips while a request or issue mutation is active, and checks once on returning to the active window when the list is stale. Failed automatic polls keep the current list visible and show a warning; manual Refresh retains its normal error behavior.
+
 ## Completing and reopening issues (PATCH)
 
 The checklist checkbox mutates state on GitHub: ticking an open issue sends `PATCH /repos/{owner}/{repo}/issues/{number}` with `{"state": "closed", "state_reason": "completed"}`; unticking a closed one in the Closed view sends `{"state": "open"}`. Nothing else is touched — title, body, assignees, and labels are never sent. A change counts only when GitHub echoes the requested state, so an unexpected server reply is treated as a failure rather than a success.
@@ -125,7 +127,7 @@ Guards and feedback: the row shows a spinner while its PATCH is in flight and a 
 - **Rate limits:** when GitHub throttles requests, the app shows the server-suggested wait and does not retry mutations on its own. Wait for the delay, then use **Refresh** or retry the checkbox.
 - **One account at a time:** signing in as a different user clears the previous account's list, filters, and undo state. Sign-out removes local credentials only; revoke the authorization itself on github.com.
 - **Locked or missing wallet:** if KWallet cannot be opened, the session stays in memory only and sign-out warns until saved credentials can actually be removed (a retry button is offered).
-- **No offline mode:** the list always reflects GitHub at load time; without a network connection it shows an error instead of stale data. There are no background refreshes, notifications, or widgets in 0.1.
+- **No offline mode:** the list is not cached across app restarts. An automatic refresh failure keeps the current session's list visible with a warning; notifications and widgets are not provided.
 
 ## Non-goals
 

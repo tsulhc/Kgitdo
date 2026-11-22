@@ -140,6 +140,41 @@ ColumnLayout {
                     onClicked: authSession.logout()
                 }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+                Controls.Label {
+                    textFormat: Text.PlainText
+                    text: i18n("Auto refresh:")
+                    opacity: 0.75
+                    Accessible.name: text
+                }
+                Controls.ComboBox {
+                    id: autoRefreshCombo
+                    model: [i18n("Off"), i18n("2 min"), i18n("5 min"), i18n("15 min"), i18n("30 min")]
+                    currentIndex: {
+                        const values = [0, 2, 5, 15, 30];
+                        return Math.max(0, values.indexOf(issueController.autoRefreshMinutes));
+                    }
+                    onActivated: function(index) {
+                        issueController.autoRefreshMinutes = [0, 2, 5, 15, 30][index];
+                    }
+                    Accessible.name: i18n("Automatic refresh interval")
+                    Controls.ToolTip.visible: hovered
+                    Controls.ToolTip.text: i18n("Automatically checks for issue updates while Kgitdo is open.")
+                }
+                Item { Layout.fillWidth: true }
+                Controls.Label {
+                    textFormat: Text.PlainText
+                    visible: !isNaN(issueController.lastRefresh.getTime())
+                    text: !isNaN(issueController.lastRefresh.getTime())
+                        ? i18n("Updated %1", issueController.lastRefresh.toLocalTime().toLocaleString(Qt.locale(), Locale.ShortFormat))
+                        : i18n("Not updated yet")
+                    opacity: 0.65
+                    font.pixelSize: 12
+                    Accessible.name: text
+                }
+            }
             Controls.Label {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
@@ -726,6 +761,8 @@ ColumnLayout {
         width: Math.min(680, checklist.width - 36)
         anchors.centerIn: parent
         standardButtons: Controls.Dialog.NoButton
+        onOpened: issueController.setAutoRefreshPaused(true)
+        onClosed: issueController.setAutoRefreshPaused(false)
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.largeSpacing
             Controls.Label {
@@ -804,5 +841,17 @@ ColumnLayout {
         }
     }
 
+    property real savedIssueListContentY: 0
+    Connections {
+        target: issueController
+        function onBackgroundRefreshStarted() {
+            checklist.savedIssueListContentY = issueList.contentY;
+        }
+        function onBackgroundRefreshFinished() {
+            Qt.callLater(function() {
+                issueList.contentY = checklist.savedIssueListContentY;
+            });
+        }
+    }
 
 }

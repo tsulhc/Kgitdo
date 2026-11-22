@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QSet>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -48,6 +49,7 @@ class IssueController : public QObject
     Q_PROPERTY(QDateTime lastRefresh READ lastRefresh NOTIFY lastRefreshChanged)
     Q_PROPERTY(bool canUndoClose READ canUndoClose NOTIFY undoChanged)
     Q_PROPERTY(QString undoMessage READ undoMessage NOTIFY undoChanged)
+    Q_PROPERTY(int autoRefreshMinutes READ autoRefreshMinutes WRITE setAutoRefreshMinutes NOTIFY autoRefreshMinutesChanged)
 
 public:
     // Mirror IssueQuery enums for QML (int-compatible values).
@@ -96,6 +98,7 @@ public:
     // Test-only: QML and production code use canUndoClose().
     bool undoInFlightForTesting() const { return m_undoInFlight; }
     QString undoMessage() const { return m_undoMessage; }
+    int autoRefreshMinutes() const { return m_autoRefreshMinutes; }
 
     void setView(int view);
     void setIssueState(int state);
@@ -104,6 +107,10 @@ public:
     void setSearchText(const QString &value);
 
     Q_INVOKABLE void reload();
+    Q_INVOKABLE void setAutoRefreshMinutes(int minutes);
+    Q_INVOKABLE void setAutoRefreshPaused(bool paused) { m_autoRefreshPaused = paused; }
+    void triggerAutoRefreshForTesting();
+    void triggerApplicationActiveForTesting();
     Q_INVOKABLE void createIssue(const QString &repoFullName, const QString &title, const QString &body);
     Q_INVOKABLE void closeIssue(const QString &issueId);
     Q_INVOKABLE void reopenIssue(const QString &issueId);
@@ -135,6 +142,9 @@ Q_SIGNALS:
     void countsChanged();
     void lastRefreshChanged();
     void undoChanged();
+    void autoRefreshMinutesChanged();
+    void backgroundRefreshStarted();
+    void backgroundRefreshFinished();
 
 private:
     void setLoading(bool loading);
@@ -156,6 +166,10 @@ private:
     void sendStateChange(qlonglong id, bool closed, bool isUndo);
     void clearUndo();
     int loadedRow(qlonglong id) const;
+    void reloadInternal(bool background);
+    void autoRefreshTick();
+    void handleApplicationActive();
+    bool canAutoRefresh() const;
 
     AuthSession *m_auth = nullptr;
     GitHubClient *m_client = nullptr;
@@ -187,6 +201,7 @@ private:
     // A read held during rotation resumes once the same user is authenticated.
     // Mutations are never replayed automatically.
     bool m_reloadAfterRefresh = false;
+    bool m_reloadAfterRefreshBackground = false;
     QString m_errorMessage;
     QString m_warningMessage;
     bool m_incomplete = false;
@@ -207,6 +222,11 @@ private:
     // still-relevant warning.
     qlonglong m_warningOwnerId = 0;
     QDateTime m_lastRefresh;
+    QDateTime m_lastAutoAttempt;
+    QDateTime m_rateLimitedAt;
+    QTimer m_autoRefreshTimer;
+    int m_autoRefreshMinutes = 5;
+    bool m_autoRefreshPaused = false;
     // Login the loaded list belongs to. Compared on each Authenticated
     // transition so a different account signing in without an intermediate
     // sign-out (e.g. refresh failure followed by a fresh device flow) still

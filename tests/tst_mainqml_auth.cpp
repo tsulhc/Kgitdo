@@ -5,6 +5,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QStandardPaths>
 #include <QUrl>
 
 #include <KLocalizedContext>
@@ -68,8 +69,14 @@ class MainQmlAuthTest final : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void initTestCase();
     void pageReflectsEveryRealAuthState();
 };
+
+void MainQmlAuthTest::initTestCase()
+{
+    QStandardPaths::setTestModeEnabled(true);
+}
 
 void MainQmlAuthTest::pageReflectsEveryRealAuthState()
 {
