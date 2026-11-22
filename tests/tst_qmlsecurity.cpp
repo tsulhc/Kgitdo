@@ -77,6 +77,19 @@ private Q_SLOTS:
         QVERIFY(qml.contains(QStringLiteral("Clear filters")));
         QVERIFY(qml.contains(QStringLiteral("Accessible.name: selected")));
     }
+
+    void automaticRefreshHasAccessibleControls()
+    {
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        QVERIFY(qml.contains(QStringLiteral("issueController.autoRefreshMinutes")));
+        QVERIFY(qml.contains(QStringLiteral("Automatic refresh interval")));
+        QVERIFY(qml.contains(QStringLiteral("i18n(\"Off\")")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.lastRefresh")));
+        QVERIFY(qml.contains(QStringLiteral("onBackgroundRefreshStarted")));
+        QVERIFY(qml.contains(QStringLiteral("issueList.contentY = checklist.savedIssueListContentY")));
+    }
 };
 
 QTEST_MAIN(QmlSecurityTest)

@@ -1,4 +1,6 @@
 #include <QtTest>
+#include <QSettings>
+#include <QStandardPaths>
 
 #include "AuthSession.h"
 #include "GitHubClient.h"
@@ -306,6 +308,11 @@ class IssueControllerTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void initTestCase();
+    void autoRefreshSettingPersistsAndTickLoads();
+    void autoRefreshSkipsBusyAndRateLimited();
+    void backgroundFailureKeepsFilteredListAndSuccessClearsWarning();
+    void applicationActivationRefreshesStaleList();
     void reloadLoadsAndPopulates();
     void viewChangeReloadsSingleQuery();
     void stateChangeReloads();
@@ -363,6 +370,131 @@ private Q_SLOTS:
     void logoutClearsPendingAndUndo();
     void reloginDiscardsInFlightMutation();
 };
+
+void IssueControllerTest::initTestCase()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    QSettings settings;
+    settings.setValue(QStringLiteral("issues/autoRefreshMinutes"), 5);
+}
+
+void IssueControllerTest::autoRefreshSettingPersistsAndTickLoads()
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("issues/autoRefreshMinutes"), 5);
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    QCOMPARE(controller.autoRefreshMinutes(), 5);
+    controller.setAutoRefreshMinutes(2);
+    QCOMPARE(settings.value(QStringLiteral("issues/autoRefreshMinutes")).toInt(), 2);
+    IssueController restored(auth, &client);
+    QCOMPARE(restored.autoRefreshMinutes(), 2);
+    controller.reload();
+    const int before = api.requestedUrls.size();
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(api.requestedUrls.size(), before + 2);
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.setAutoRefreshMinutes(0);
+    const int disabledAt = api.requestedUrls.size();
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(api.requestedUrls.size(), disabledAt);
+    controller.setAutoRefreshMinutes(5);
+}
+
+void IssueControllerTest::autoRefreshSkipsBusyAndRateLimited()
+{
+    FakeIssueApi api;
+    api.defer = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const int loadingCount = api.requestedUrls.size();
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(api.requestedUrls.size(), loadingCount);
+    api.fireAll();
+
+    api.deferUpdate = true;
+    api.updateQueue.append(httpUpdate("closed"));
+    controller.closeIssue(rowId(controller, 0));
+    const int mutationCount = api.requestedUrls.size();
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(api.requestedUrls.size(), mutationCount);
+    api.fireUpdates();
+
+    FakeIssueApi limitedApi;
+    limitedApi.queue.append(httpRateLimited(3600));
+    limitedApi.queue.append(httpRateLimited(3600));
+    GitHubClient limitedClient(&limitedApi);
+    AuthSession *limitedAuth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController limitedController(limitedAuth, &limitedClient);
+    limitedController.reload();
+    const int rateLimitedCount = limitedApi.requestedUrls.size();
+    limitedController.triggerAutoRefreshForTesting();
+    QCOMPARE(limitedApi.requestedUrls.size(), rateLimitedCount);
+
+    FakeIssueApi signedOutApi;
+    GitHubClient signedOutClient(&signedOutApi);
+    auto *signedOutAuth = new AuthSession(new TinyAuthNetwork(this), new InMemorySecureStore(this), this);
+    IssueController signedOutController(signedOutAuth, &signedOutClient);
+    signedOutController.triggerAutoRefreshForTesting();
+    QVERIFY(signedOutApi.requestedUrls.isEmpty());
+}
+
+void IssueControllerTest::backgroundFailureKeepsFilteredListAndSuccessClearsWarning()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/other")})));
+    api.queue.append(httpOk(pageJson({})));
+    IssueHttpResult failed;
+    failed.transportError = QStringLiteral("offline");
+    api.queue.append(failed);
+    api.queue.append(failed);
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r"), itemJson(2, 8, "B", "o/other")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    controller.setRepoFilter(QStringLiteral("o/r"));
+    controller.setLabelFilter(QStringLiteral("keep-filter"));
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(controller.loadedCount(), 2);
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("Automatic refresh failed")));
+    QCOMPARE(controller.repoFilter(), QStringLiteral("o/r"));
+    QCOMPARE(controller.labelFilter(), QStringLiteral("keep-filter"));
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(controller.loadedCount(), 2);
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(!controller.hasWarning());
+}
+
+void IssueControllerTest::applicationActivationRefreshesStaleList()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.setAutoRefreshMinutes(2);
+    controller.reload();
+    const int before = api.requestedUrls.size();
+    controller.triggerApplicationActiveForTesting();
+    QCOMPARE(api.requestedUrls.size(), before + 2);
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.setAutoRefreshMinutes(5);
+}
 
 void IssueControllerTest::reloadLoadsAndPopulates()
 {
