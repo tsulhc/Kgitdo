@@ -145,7 +145,6 @@ private:
     void loadSavedFilters();
     void persistSavedFilters();
     void notifyActiveSavedFilterChanged(int previous);
-    QString defaultSavedFilterName() const;
     void updateAvailableLabels();
     void clearOutcomeFlags();
     // Drops every account-derived state (list, repos, filter, messages,
