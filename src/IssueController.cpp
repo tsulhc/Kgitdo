@@ -314,24 +314,24 @@ void IssueController::reloadInternal(bool background)
     }
     m_client->fetchIssues(view, state, token, login,
                           [this, viewAtStart, stateAtStart, generation, background](
-                               const GitHubClient::FetchResult &result) {
+                              const GitHubClient::FetchResult &result) {
                               if (generation != m_generation) {
                                   // Superseded by logout (or a newer fetch):
                                   // touch nothing, not even the loading flag.
                                   return;
-                               }
-                               setLoading(false);
-                               if (m_view != viewAtStart || m_issueState != stateAtStart) {
+                              }
+                              setLoading(false);
+                              if (m_view != viewAtStart || m_issueState != stateAtStart) {
                                   // Selection changed mid-load: this data
                                   // belongs to the old selection. Discard it
                                   // and fetch once for the current one.
-                                   reload();
-                                   if (background) {
-                                       Q_EMIT backgroundRefreshFinished();
-                                   }
-                                   return;
-                               }
-                               if (!result.ok) {
+                                  reloadInternal(background);
+                                  if (background) {
+                                      Q_EMIT backgroundRefreshFinished();
+                                  }
+                                  return;
+                              }
+                              if (!result.ok) {
                                   // A failed load carries no data, so the
                                   // partial-data flags are meaningless. The
                                   // rate-limit fields are touched only when
@@ -342,58 +342,58 @@ void IssueController::reloadInternal(bool background)
                                   // owner are preserved in that case.
                                   m_incomplete = false;
                                   m_capped = false;
-                                   m_truncated = false;
+                                  m_truncated = false;
                                   if (result.unauthorized && m_auth && m_auth->isAuthenticated()
                                       && !m_auth->pending()) {
                                       // The query was rejected; refresh auth,
                                       // but do not automatically replay the read.
                                       m_auth->refreshSession();
                                   }
-                                   if (result.rateLimited) {
-                                       m_rateLimited = true;
-                                       m_retryAfterSecs = result.retryAfterSecs;
-                                       m_rateLimitedAt = QDateTime::currentDateTimeUtc();
+                                  if (result.rateLimited) {
+                                      m_rateLimited = true;
+                                      m_retryAfterSecs = result.retryAfterSecs;
+                                      m_rateLimitedAt = QDateTime::currentDateTimeUtc();
                                       // Fetch-owned outcome (see below).
                                       m_rateLimitedMutationId = 0;
-                                   }
-                                   Q_EMIT outcomeChanged();
-                                   if (background) {
-                                       const QString reason = result.errorMessage.isEmpty()
-                                           ? QStringLiteral("Could not load issues. Please retry.")
-                                           : result.errorMessage;
-                                       const QString lastUpdated = m_lastRefresh.isValid()
-                                           ? m_lastRefresh.toLocalTime().toString(QLocale().timeFormat(QLocale::ShortFormat))
-                                           : QStringLiteral("never");
-                                       m_warningMessage = QStringLiteral("Automatic refresh failed: %1. Showing issues from %2.")
-                                           .arg(reason, lastUpdated);
-                                       m_warningOwnerId = 0;
-                                       Q_EMIT warningChanged();
-                                       Q_EMIT backgroundRefreshFinished();
-                                       return;
-                                   }
-                                   m_warningMessage.clear();
+                                  }
+                                  Q_EMIT outcomeChanged();
+                                  if (background) {
+                                      const QString reason = result.errorMessage.isEmpty()
+                                          ? QStringLiteral("Could not load issues. Please retry.")
+                                          : result.errorMessage;
+                                      const QString lastUpdated = m_lastRefresh.isValid()
+                                          ? m_lastRefresh.toLocalTime().toString(QLocale().timeFormat(QLocale::ShortFormat))
+                                          : QStringLiteral("never");
+                                      m_warningMessage = QStringLiteral("Automatic refresh failed: %1. Showing issues from %2.")
+                                          .arg(reason, lastUpdated);
+                                      m_warningOwnerId = 0;
+                                      Q_EMIT warningChanged();
+                                      Q_EMIT backgroundRefreshFinished();
+                                      return;
+                                  }
+                                  m_warningMessage.clear();
                                   m_warningOwnerId = 0;
                                   Q_EMIT warningChanged();
                                   m_errorMessage = result.errorMessage.isEmpty()
                                       ? QStringLiteral("Could not load issues. Please retry.")
                                       : result.errorMessage;
                                   Q_EMIT errorMessageChanged();
-                                   return;
-                               }
-                               if (background && !m_errorMessage.isEmpty()) {
-                                   m_errorMessage.clear();
-                                   Q_EMIT errorMessageChanged();
-                               }
-                               m_incomplete = result.incomplete;
+                                  return;
+                              }
+                              if (background && !m_errorMessage.isEmpty()) {
+                                  m_errorMessage.clear();
+                                  Q_EMIT errorMessageChanged();
+                              }
+                              m_incomplete = result.incomplete;
                               m_capped = result.capped;
                               m_truncated = result.truncated;
-                               if (result.rateLimited) {
+                              if (result.rateLimited) {
                                   // This fetch established its own
                                   // rate-limit outcome (e.g. a capped
                                   // partial list).
                                   m_rateLimited = true;
-                                   m_retryAfterSecs = result.retryAfterSecs;
-                                   m_rateLimitedAt = QDateTime::currentDateTimeUtc();
+                                  m_retryAfterSecs = result.retryAfterSecs;
+                                  m_rateLimitedAt = QDateTime::currentDateTimeUtc();
                                   // Fetch-owned outcome: a later mutation
                                   // success must not retire it (partial-list
                                   // or load warnings stay until the next
@@ -436,8 +436,8 @@ void IssueController::reloadInternal(bool background)
                                   && !m_auth->pending()) {
                                   m_auth->refreshSession(); // Partial pages may have returned 401.
                               }
-                               m_lastRefresh = QDateTime::currentDateTimeUtc();
-                               m_rateLimitedAt = m_rateLimited ? m_rateLimitedAt : QDateTime();
+                              m_lastRefresh = QDateTime::currentDateTimeUtc();
+                              m_rateLimitedAt = m_rateLimited ? m_rateLimitedAt : QDateTime();
                               Q_EMIT lastRefreshChanged();
                               if (!result.errorMessage.isEmpty()) {
                                   // Partial data: list what loaded, warn.
@@ -451,12 +451,12 @@ void IssueController::reloadInternal(bool background)
                                   m_warningMessage.clear();
                               }
                               // Fetch-owned in every sub-branch above.
-                               m_warningOwnerId = 0;
-                               Q_EMIT warningChanged();
-                               if (background) {
-                                   Q_EMIT backgroundRefreshFinished();
-                               }
-                           });
+                              m_warningOwnerId = 0;
+                              Q_EMIT warningChanged();
+                              if (background) {
+                                  Q_EMIT backgroundRefreshFinished();
+                              }
+                          });
 }
 
 void IssueController::setLoading(bool loading)

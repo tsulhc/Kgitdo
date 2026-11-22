@@ -97,8 +97,8 @@ public:
     Q_INVOKABLE void reload();
     Q_INVOKABLE void setAutoRefreshMinutes(int minutes);
     Q_INVOKABLE void setAutoRefreshPaused(bool paused) { m_autoRefreshPaused = paused; }
-    Q_INVOKABLE void triggerAutoRefreshForTesting();
-    Q_INVOKABLE void triggerApplicationActiveForTesting();
+    void triggerAutoRefreshForTesting();
+    void triggerApplicationActiveForTesting();
     Q_INVOKABLE void createIssue(const QString &repoFullName, const QString &title, const QString &body);
     Q_INVOKABLE void closeIssue(const QString &issueId);
     Q_INVOKABLE void reopenIssue(const QString &issueId);
