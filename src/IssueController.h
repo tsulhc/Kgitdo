@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include "AuthSession.h"
 #include "GitHubClient.h"
@@ -27,6 +28,8 @@ class IssueController : public QObject
     Q_PROPERTY(QStringList availableLabels READ availableLabels NOTIFY availableLabelsChanged)
     Q_PROPERTY(QVariantList savedFilters READ savedFilters NOTIFY savedFiltersChanged)
     Q_PROPERTY(int activeSavedFilter READ activeSavedFilter NOTIFY activeSavedFilterChanged)
+    Q_PROPERTY(int maxSavedFilters READ maxSavedFilters CONSTANT)
+    Q_PROPERTY(int maxSavedFilterNameLength READ maxSavedFilterNameLength CONSTANT)
     Q_PROPERTY(IssueListModel *model READ model CONSTANT)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
@@ -71,6 +74,8 @@ public:
     QStringList availableLabels() const { return m_availableLabels; }
     QVariantList savedFilters() const { return m_savedFilters; }
     int activeSavedFilter() const;
+    int maxSavedFilters() const;
+    int maxSavedFilterNameLength() const;
     IssueListModel *model() const { return m_model; }
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_errorMessage; }
@@ -105,6 +110,7 @@ public:
     Q_INVOKABLE void undoLastClose();
     Q_INVOKABLE void dismissUndo();
     Q_INVOKABLE bool saveCurrentFilters(const QString &name);
+    Q_INVOKABLE QString defaultSavedFilterName() const;
     Q_INVOKABLE void applySavedFilter(int index);
     Q_INVOKABLE void removeSavedFilter(int index);
     Q_INVOKABLE void renameSavedFilter(int index, const QString &name);
@@ -134,6 +140,8 @@ private:
     void setLoading(bool loading);
     void applyRepoFilter();
     void setFilterValues(const QString &repo, const QString &label, const QString &search);
+    bool filtersEqual(const QVariantMap &filter, const QString &repo, const QString &label, const QString &search) const;
+    QString defaultSavedFilterName(const QString &repo, const QString &label, const QString &search) const;
     void loadSavedFilters();
     void persistSavedFilters();
     void notifyActiveSavedFilterChanged(int previous);

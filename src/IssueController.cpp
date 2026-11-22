@@ -1,9 +1,16 @@
 #include "IssueController.h"
 
 #include <QSet>
+#include <QMetaType>
 #include <QVariantMap>
 #include <QTimer>
 #include <algorithm>
+
+namespace
+{
+constexpr int SavedFilterLimit = 20;
+constexpr int SavedFilterNameLimit = 60;
+}
 
 IssueController::IssueController(AuthSession *authSession, GitHubClient *client, QObject *parent)
     : IssueController(authSession, client, nullptr, parent)
@@ -122,11 +129,11 @@ void IssueController::setSearchText(const QString &value)
 
 int IssueController::activeSavedFilter() const
 {
+    // The active tab is derived so edits made through the regular controls
+    // naturally deselect it without storing another mutable state value.
     for (int i = 0; i < m_savedFilters.size(); ++i) {
         const QVariantMap filter = m_savedFilters.at(i).toMap();
-        if (filter.value(QStringLiteral("repo")).toString() == m_repoFilter
-            && filter.value(QStringLiteral("label")).toString().compare(m_labelFilter, Qt::CaseInsensitive) == 0
-            && filter.value(QStringLiteral("search")).toString().trimmed() == m_searchText.trimmed()) {
+        if (filtersEqual(filter, m_repoFilter, m_labelFilter, m_searchText)) {
             return i;
         }
     }
@@ -135,31 +142,60 @@ int IssueController::activeSavedFilter() const
 
 QString IssueController::defaultSavedFilterName() const
 {
+    return defaultSavedFilterName(m_repoFilter, m_labelFilter, m_searchText);
+}
+
+QString IssueController::defaultSavedFilterName(const QString &repo, const QString &label, const QString &search) const
+{
     QStringList parts;
-    if (!m_labelFilter.isEmpty()) parts.append(m_labelFilter);
-    if (!m_repoFilter.isEmpty()) parts.append(m_repoFilter);
-    if (!m_searchText.isEmpty()) parts.append(m_searchText);
+    if (!label.isEmpty()) {
+        parts.append(label);
+    }
+    if (!repo.isEmpty()) {
+        parts.append(repo);
+    }
+    if (!search.isEmpty()) {
+        parts.append(search);
+    }
     return parts.join(QStringLiteral(" · "));
+}
+
+bool IssueController::filtersEqual(const QVariantMap &filter, const QString &repo, const QString &label,
+                                   const QString &search) const
+{
+    return filter.value(QStringLiteral("repo")).toString() == repo
+        && filter.value(QStringLiteral("label")).toString().compare(label, Qt::CaseInsensitive) == 0
+        && filter.value(QStringLiteral("search")).toString().trimmed() == search.trimmed();
+}
+
+int IssueController::maxSavedFilters() const
+{
+    return SavedFilterLimit;
+}
+
+int IssueController::maxSavedFilterNameLength() const
+{
+    return SavedFilterNameLimit;
 }
 
 bool IssueController::saveCurrentFilters(const QString &name)
 {
-    if (m_repoFilter.isEmpty() && m_labelFilter.isEmpty() && m_searchText.isEmpty())
+    if (m_repoFilter.isEmpty() && m_labelFilter.isEmpty() && m_searchText.isEmpty()) {
         return false;
-    if (m_savedFilters.size() >= 20)
+    }
+    if (m_savedFilters.size() >= SavedFilterLimit) {
         return false;
+    }
     for (const QVariant &item : m_savedFilters) {
-        const QVariantMap filter = item.toMap();
-        if (filter.value(QStringLiteral("repo")).toString() == m_repoFilter
-            && filter.value(QStringLiteral("label")).toString().compare(m_labelFilter, Qt::CaseInsensitive) == 0
-            && filter.value(QStringLiteral("search")).toString().trimmed() == m_searchText.trimmed())
+        if (filtersEqual(item.toMap(), m_repoFilter, m_labelFilter, m_searchText)) {
             return false;
+        }
     }
     QString savedName = name.trimmed();
-    if (savedName.isEmpty())
+    if (savedName.isEmpty()) {
         savedName = defaultSavedFilterName();
-    if (savedName.size() > 60)
-        savedName = savedName.left(60).trimmed();
+    }
+    savedName = savedName.left(SavedFilterNameLimit).trimmed();
     const int previousActive = activeSavedFilter();
     m_savedFilters.append(QVariantMap{
         {QStringLiteral("name"), savedName},
@@ -182,16 +218,26 @@ void IssueController::setFilterValues(const QString &repo, const QString &label,
     m_repoFilter = repo;
     m_labelFilter = label;
     m_searchText = search;
-    if (repoChanged) Q_EMIT repoFilterChanged();
-    if (labelChanged) Q_EMIT labelFilterChanged();
-    if (searchChanged) Q_EMIT searchTextChanged();
-    if (repoChanged || labelChanged || searchChanged) applyRepoFilter();
+    if (repoChanged) {
+        Q_EMIT repoFilterChanged();
+    }
+    if (labelChanged) {
+        Q_EMIT labelFilterChanged();
+    }
+    if (searchChanged) {
+        Q_EMIT searchTextChanged();
+    }
+    if (repoChanged || labelChanged || searchChanged) {
+        applyRepoFilter();
+    }
     notifyActiveSavedFilterChanged(previousActive);
 }
 
 void IssueController::applySavedFilter(int index)
 {
-    if (index < 0 || index >= m_savedFilters.size()) return;
+    if (index < 0 || index >= m_savedFilters.size()) {
+        return;
+    }
     const QVariantMap filter = m_savedFilters.at(index).toMap();
     setFilterValues(filter.value(QStringLiteral("repo")).toString(),
                     filter.value(QStringLiteral("label")).toString(),
@@ -200,7 +246,9 @@ void IssueController::applySavedFilter(int index)
 
 void IssueController::removeSavedFilter(int index)
 {
-    if (index < 0 || index >= m_savedFilters.size()) return;
+    if (index < 0 || index >= m_savedFilters.size()) {
+        return;
+    }
     const int previousActive = activeSavedFilter();
     m_savedFilters.removeAt(index);
     persistSavedFilters();
@@ -210,12 +258,18 @@ void IssueController::removeSavedFilter(int index)
 
 void IssueController::renameSavedFilter(int index, const QString &name)
 {
-    if (index < 0 || index >= m_savedFilters.size()) return;
+    if (index < 0 || index >= m_savedFilters.size()) {
+        return;
+    }
     QString trimmed = name.trimmed();
-    if (trimmed.isEmpty()) return;
-    trimmed = trimmed.left(60).trimmed();
+    if (trimmed.isEmpty()) {
+        return;
+    }
+    trimmed = trimmed.left(SavedFilterNameLimit).trimmed();
     QVariantMap filter = m_savedFilters.at(index).toMap();
-    if (filter.value(QStringLiteral("name")).toString() == trimmed) return;
+    if (filter.value(QStringLiteral("name")).toString() == trimmed) {
+        return;
+    }
     filter.insert(QStringLiteral("name"), trimmed);
     m_savedFilters[index] = filter;
     persistSavedFilters();
@@ -224,32 +278,80 @@ void IssueController::renameSavedFilter(int index, const QString &name)
 
 void IssueController::moveSavedFilter(int from, int to)
 {
-    if (from < 0 || from >= m_savedFilters.size() || to < 0 || to >= m_savedFilters.size() || from == to) return;
+    if (from < 0 || from >= m_savedFilters.size() || to < 0 || to >= m_savedFilters.size() || from == to) {
+        return;
+    }
+    const int activeBeforeMove = activeSavedFilter();
     m_savedFilters.move(from, to);
     persistSavedFilters();
     Q_EMIT savedFiltersChanged();
-    Q_EMIT activeSavedFilterChanged();
+    if (activeBeforeMove != activeSavedFilter()) {
+        Q_EMIT activeSavedFilterChanged();
+    }
 }
 
 void IssueController::loadSavedFilters()
 {
-    if (!m_savedFilterStore || !m_auth || m_auth->userLogin().isEmpty()) return;
+    if (!m_savedFilterStore || !m_auth || m_auth->userLogin().isEmpty()) {
+        return;
+    }
     m_savedFilterLogin = m_auth->userLogin();
-    m_savedFilters = m_savedFilterStore->load(m_savedFilterLogin);
-    if (m_savedFilters.size() > 20) m_savedFilters = m_savedFilters.mid(0, 20);
+    const QVariantList stored = m_savedFilterStore->load(m_savedFilterLogin);
+    QVariantList sanitized;
+    for (const QVariant &entry : stored) {
+        if (entry.metaType().id() != QMetaType::QVariantMap) {
+            continue;
+        }
+        const QVariantMap raw = entry.toMap();
+        const QString repo = raw.value(QStringLiteral("repo")).toString().trimmed();
+        const QString label = raw.value(QStringLiteral("label")).toString();
+        const QString search = raw.value(QStringLiteral("search")).toString().trimmed();
+        if (repo.isEmpty() && label.isEmpty() && search.isEmpty()) {
+            continue;
+        }
+        QString name = raw.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty()) {
+            name = defaultSavedFilterName(repo, label, search);
+        }
+        name = name.left(SavedFilterNameLimit).trimmed();
+        const QVariantMap filter{
+            {QStringLiteral("name"), name},
+            {QStringLiteral("repo"), repo},
+            {QStringLiteral("label"), label},
+            {QStringLiteral("search"), search}
+        };
+        bool duplicate = false;
+        for (const QVariant &existing : sanitized) {
+            if (filtersEqual(existing.toMap(), repo, label, search)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+        sanitized.append(filter);
+        if (sanitized.size() >= SavedFilterLimit) {
+            break;
+        }
+    }
+    m_savedFilters = sanitized;
     Q_EMIT savedFiltersChanged();
     Q_EMIT activeSavedFilterChanged();
 }
 
 void IssueController::persistSavedFilters()
 {
-    if (m_savedFilterStore && !m_savedFilterLogin.isEmpty())
+    if (m_savedFilterStore && !m_savedFilterLogin.isEmpty()) {
         m_savedFilterStore->save(m_savedFilterLogin, m_savedFilters);
+    }
 }
 
 void IssueController::notifyActiveSavedFilterChanged(int previous)
 {
-    if (previous != activeSavedFilter()) Q_EMIT activeSavedFilterChanged();
+    if (previous != activeSavedFilter()) {
+        Q_EMIT activeSavedFilterChanged();
+    }
 }
 
 void IssueController::createIssue(const QString &repoFullName, const QString &title, const QString &body)
@@ -833,8 +935,14 @@ void IssueController::clearAllState()
     const bool hadSavedFilters = !m_savedFilters.isEmpty();
     const int previousActive = activeSavedFilter();
     m_savedFilters.clear();
-    if (hadSavedFilters) Q_EMIT savedFiltersChanged();
-    if (previousActive != -1) Q_EMIT activeSavedFilterChanged();
+    if (hadSavedFilters) {
+        Q_EMIT savedFiltersChanged();
+    }
+    if (previousActive != -1) {
+        Q_EMIT activeSavedFilterChanged();
+    }
+    // This is account-derived UI state only; saved tabs remain in QSettings
+    // so the same login can load them again after a later sign-in.
     // Invalidate any in-flight fetch first: its callback must not
     // repopulate the list with the previous token's data, even when the
     // list is currently empty. Bump the generation so the stale callback

@@ -89,6 +89,13 @@ private Q_SLOTS:
         QVERIFY(qml.contains(QStringLiteral("issueController.removeSavedFilter(index)")));
         QVERIFY(qml.contains(QStringLiteral("Accessible.name: i18n(\"Apply saved filter: %1\"")));
         QVERIFY(qml.contains(QStringLiteral("Accessible.name: i18n(\"Remove saved filter: %1\"")));
+        QVERIFY(qml.contains(QStringLiteral("text: i18n(\"Rename…\")")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.renameSavedFilter(checklist.editingSavedFilterIndex")));
+        QVERIFY(qml.contains(QStringLiteral("icon.name: \"tab-close\"")));
+        QVERIFY(qml.contains(QStringLiteral("icon.name: \"overflow-menu\"")));
+        QVERIFY(qml.contains(QStringLiteral("display: Controls.AbstractButton.IconOnly")));
+        QVERIFY(qml.contains(QStringLiteral("maximumLength: issueController.maxSavedFilterNameLength")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.maxSavedFilters")));
         QVERIFY(qml.contains(QStringLiteral("Accessible.name: text")));
         QVERIFY(qml.contains(QStringLiteral("textFormat: Text.PlainText")));
     }
