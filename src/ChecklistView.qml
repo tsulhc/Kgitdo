@@ -239,11 +239,15 @@ ColumnLayout {
                                 text: i18n("Rename…")
                                 onTriggered: checklist.openSavedFilterDialog(index, modelData.name)
                                 Accessible.name: i18n("Rename saved filter: %1", modelData.name)
+                                Controls.ToolTip.text: i18n("Choose a new name for this saved filter.")
+                                Controls.ToolTip.visible: hovered
                             }
                             Controls.MenuItem {
                                 text: i18n("Remove")
                                 onTriggered: issueController.removeSavedFilter(index)
                                 Accessible.name: i18n("Remove saved filter: %1", modelData.name)
+                                Controls.ToolTip.text: i18n("Remove this saved filter tab.")
+                                Controls.ToolTip.visible: hovered
                             }
                         }
                     }
@@ -371,7 +375,7 @@ ColumnLayout {
         title: checklist.editingSavedFilterIndex < 0 ? i18n("Save filter tab") : i18n("Rename filter tab")
         modal: true
         anchors.centerIn: parent
-        width: Kirigami.Units.gridUnit * 24
+        width: Math.min(Kirigami.Units.gridUnit * 24, checklist.width - Kirigami.Units.largeSpacing * 2)
         standardButtons: Controls.DialogButtonBox.Ok | Controls.DialogButtonBox.Cancel
         onOpened: savedFilterName.forceActiveFocus()
         onAccepted: {

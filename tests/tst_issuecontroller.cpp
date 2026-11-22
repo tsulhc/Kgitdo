@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <QByteArray>
 #include <QTemporaryDir>
 #include <QSettings>
 
