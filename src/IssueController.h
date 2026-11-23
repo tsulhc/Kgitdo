@@ -4,11 +4,15 @@
 #include <QObject>
 #include <QSet>
 #include <QStringList>
+#include <QTimer>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include "AuthSession.h"
 #include "GitHubClient.h"
 #include "IssueListModel.h"
 #include "IssueQuery.h"
+#include "SavedFilterStore.h"
 
 // Owns the checklist state: view/state/repo/label filters, loading, the full
 // loaded set, and the fetch outcome flags. View/state changes reload from
@@ -23,6 +27,10 @@ class IssueController : public QObject
     Q_PROPERTY(QStringList availableRepos READ availableRepos NOTIFY availableReposChanged)
     Q_PROPERTY(QString labelFilter READ labelFilter WRITE setLabelFilter NOTIFY labelFilterChanged)
     Q_PROPERTY(QStringList availableLabels READ availableLabels NOTIFY availableLabelsChanged)
+    Q_PROPERTY(QVariantList savedFilters READ savedFilters NOTIFY savedFiltersChanged)
+    Q_PROPERTY(int activeSavedFilter READ activeSavedFilter NOTIFY activeSavedFilterChanged)
+    Q_PROPERTY(int maxSavedFilters READ maxSavedFilters CONSTANT)
+    Q_PROPERTY(int maxSavedFilterNameLength READ maxSavedFilterNameLength CONSTANT)
     Q_PROPERTY(IssueListModel *model READ model CONSTANT)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
@@ -41,6 +49,7 @@ class IssueController : public QObject
     Q_PROPERTY(QDateTime lastRefresh READ lastRefresh NOTIFY lastRefreshChanged)
     Q_PROPERTY(bool canUndoClose READ canUndoClose NOTIFY undoChanged)
     Q_PROPERTY(QString undoMessage READ undoMessage NOTIFY undoChanged)
+    Q_PROPERTY(int autoRefreshMinutes READ autoRefreshMinutes WRITE setAutoRefreshMinutes NOTIFY autoRefreshMinutesChanged)
 
 public:
     // Mirror IssueQuery enums for QML (int-compatible values).
@@ -57,6 +66,7 @@ public:
     Q_ENUM(IssueState)
 
     explicit IssueController(AuthSession *authSession, GitHubClient *client, QObject *parent = nullptr);
+    IssueController(AuthSession *authSession, GitHubClient *client, SavedFilterStore *store, QObject *parent);
 
     int view() const { return m_view; }
     int issueState() const { return m_issueState; }
@@ -64,6 +74,10 @@ public:
     QStringList availableRepos() const { return m_availableRepos; }
     QString labelFilter() const { return m_labelFilter; }
     QStringList availableLabels() const { return m_availableLabels; }
+    QVariantList savedFilters() const { return m_savedFilters; }
+    int activeSavedFilter() const;
+    int maxSavedFilters() const;
+    int maxSavedFilterNameLength() const;
     IssueListModel *model() const { return m_model; }
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_errorMessage; }
@@ -84,6 +98,7 @@ public:
     // Test-only: QML and production code use canUndoClose().
     bool undoInFlightForTesting() const { return m_undoInFlight; }
     QString undoMessage() const { return m_undoMessage; }
+    int autoRefreshMinutes() const { return m_autoRefreshMinutes; }
 
     void setView(int view);
     void setIssueState(int state);
@@ -92,11 +107,21 @@ public:
     void setSearchText(const QString &value);
 
     Q_INVOKABLE void reload();
+    Q_INVOKABLE void setAutoRefreshMinutes(int minutes);
+    Q_INVOKABLE void setAutoRefreshPaused(bool paused) { m_autoRefreshPaused = paused; }
+    void triggerAutoRefreshForTesting();
+    void triggerApplicationActiveForTesting();
     Q_INVOKABLE void createIssue(const QString &repoFullName, const QString &title, const QString &body);
     Q_INVOKABLE void closeIssue(const QString &issueId);
     Q_INVOKABLE void reopenIssue(const QString &issueId);
     Q_INVOKABLE void undoLastClose();
     Q_INVOKABLE void dismissUndo();
+    Q_INVOKABLE bool saveCurrentFilters(const QString &name);
+    Q_INVOKABLE QString defaultSavedFilterName() const;
+    Q_INVOKABLE void applySavedFilter(int index);
+    Q_INVOKABLE void removeSavedFilter(int index);
+    Q_INVOKABLE void renameSavedFilter(int index, const QString &name);
+    Q_INVOKABLE void moveSavedFilter(int from, int to);
 
 Q_SIGNALS:
     void viewChanged();
@@ -105,6 +130,8 @@ Q_SIGNALS:
     void availableReposChanged();
     void labelFilterChanged();
     void availableLabelsChanged();
+    void savedFiltersChanged();
+    void activeSavedFilterChanged();
     void loadingChanged();
     void errorMessageChanged();
     void searchTextChanged();
@@ -115,10 +142,19 @@ Q_SIGNALS:
     void countsChanged();
     void lastRefreshChanged();
     void undoChanged();
+    void autoRefreshMinutesChanged();
+    void backgroundRefreshStarted();
+    void backgroundRefreshFinished();
 
 private:
     void setLoading(bool loading);
     void applyRepoFilter();
+    void setFilterValues(const QString &repo, const QString &label, const QString &search);
+    bool filtersEqual(const QVariantMap &filter, const QString &repo, const QString &label, const QString &search) const;
+    QString defaultSavedFilterName(const QString &repo, const QString &label, const QString &search) const;
+    void loadSavedFilters();
+    void persistSavedFilters();
+    void notifyActiveSavedFilterChanged(int previous);
     void updateAvailableLabels();
     void clearOutcomeFlags();
     // Drops every account-derived state (list, repos, filter, messages,
@@ -130,6 +166,10 @@ private:
     void sendStateChange(qlonglong id, bool closed, bool isUndo);
     void clearUndo();
     int loadedRow(qlonglong id) const;
+    void reloadInternal(bool background);
+    void autoRefreshTick();
+    void handleApplicationActive();
+    bool canAutoRefresh() const;
 
     AuthSession *m_auth = nullptr;
     GitHubClient *m_client = nullptr;
@@ -144,6 +184,9 @@ private:
     QStringList m_availableRepos;
     QString m_labelFilter;
     QStringList m_availableLabels;
+    SavedFilterStore *m_savedFilterStore = nullptr;
+    QVariantList m_savedFilters;
+    QString m_savedFilterLogin;
     QList<Issue> m_loaded;
 
     bool m_loading = false;
@@ -158,6 +201,7 @@ private:
     // A read held during rotation resumes once the same user is authenticated.
     // Mutations are never replayed automatically.
     bool m_reloadAfterRefresh = false;
+    bool m_reloadAfterRefreshBackground = false;
     QString m_errorMessage;
     QString m_warningMessage;
     bool m_incomplete = false;
@@ -178,6 +222,11 @@ private:
     // still-relevant warning.
     qlonglong m_warningOwnerId = 0;
     QDateTime m_lastRefresh;
+    QDateTime m_lastAutoAttempt;
+    QDateTime m_rateLimitedAt;
+    QTimer m_autoRefreshTimer;
+    int m_autoRefreshMinutes = 5;
+    bool m_autoRefreshPaused = false;
     // Login the loaded list belongs to. Compared on each Authenticated
     // transition so a different account signing in without an intermediate
     // sign-out (e.g. refresh failure followed by a fresh device flow) still

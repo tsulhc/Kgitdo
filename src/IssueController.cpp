@@ -1,15 +1,49 @@
 #include "IssueController.h"
 
 #include <QSet>
+#include <QGuiApplication>
+#include <QLocale>
+#include <QMetaType>
+#include <QSettings>
+#include <QVariantMap>
 #include <QTimer>
 #include <algorithm>
 
+namespace
+{
+constexpr int SavedFilterLimit = 20;
+constexpr int SavedFilterNameLimit = 60;
+}
+
 IssueController::IssueController(AuthSession *authSession, GitHubClient *client, QObject *parent)
+    : IssueController(authSession, client, nullptr, parent)
+{
+}
+
+IssueController::IssueController(AuthSession *authSession, GitHubClient *client, SavedFilterStore *store, QObject *parent)
     : QObject(parent)
     , m_auth(authSession)
     , m_client(client)
     , m_model(new IssueListModel(this))
+    , m_savedFilterStore(store)
 {
+    QSettings settings;
+    m_autoRefreshMinutes = settings.value(QStringLiteral("issues/autoRefreshMinutes"), 5).toInt();
+    if (m_autoRefreshMinutes != 0 && m_autoRefreshMinutes != 2 && m_autoRefreshMinutes != 5
+        && m_autoRefreshMinutes != 15 && m_autoRefreshMinutes != 30) {
+        m_autoRefreshMinutes = 5;
+    }
+    m_autoRefreshTimer.setInterval(60 * 1000);
+    connect(&m_autoRefreshTimer, &QTimer::timeout, this, &IssueController::autoRefreshTick);
+    m_autoRefreshTimer.start();
+    if (auto *guiApp = qobject_cast<QGuiApplication *>(QCoreApplication::instance())) {
+        connect(guiApp, &QGuiApplication::applicationStateChanged, this,
+                [this](Qt::ApplicationState state) {
+            if (state == Qt::ApplicationActive) {
+                handleApplicationActive();
+            }
+        });
+    }
     if (m_auth) {
         // Seed the identity the controller is constructed under: restore()
         // may have completed (and emitted Authenticated) before this
@@ -18,6 +52,7 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
         // new identity and wipe + needlessly reload a valid list.
         if (m_auth->isAuthenticated()) {
             m_lastLogin = m_auth->userLogin();
+            loadSavedFilters();
         }
         // Signing out invalidates the token the list was loaded with:
         // drop everything rather than showing another user's tasks.
@@ -34,19 +69,24 @@ IssueController::IssueController(AuthSession *authSession, GitHubClient *client,
             if (m_auth->status() == AuthSession::SignedOut) {
                 clearAllState();
                 m_lastLogin.clear();
+                m_savedFilterLogin.clear();
                 return;
             }
             if (m_auth->status() == AuthSession::Authenticated) {
                 if (m_auth->userLogin() != m_lastLogin) {
                     clearAllState();
                     m_lastLogin = m_auth->userLogin();
+                    loadSavedFilters();
                     reload();
                 } else if (m_reloadAfterRefresh) {
                     m_reloadAfterRefresh = false;
-                    QTimer::singleShot(0, this, [this]() { reload(); });
+                    const bool background = m_reloadAfterRefreshBackground;
+                    m_reloadAfterRefreshBackground = false;
+                    QTimer::singleShot(0, this, [this, background]() { reloadInternal(background); });
                 }
             } else if (m_auth->status() == AuthSession::Failed) {
                 m_reloadAfterRefresh = false;
+                m_reloadAfterRefreshBackground = false;
             }
         });
     }
@@ -78,9 +118,11 @@ void IssueController::setRepoFilter(const QString &repoFullName)
     if (trimmed == m_repoFilter) {
         return;
     }
+    const int previousActive = activeSavedFilter();
     m_repoFilter = trimmed;
     Q_EMIT repoFilterChanged();
     applyRepoFilter();
+    notifyActiveSavedFilterChanged(previousActive);
 }
 
 void IssueController::setLabelFilter(const QString &label)
@@ -88,9 +130,11 @@ void IssueController::setLabelFilter(const QString &label)
     if (label == m_labelFilter) {
         return;
     }
+    const int previousActive = activeSavedFilter();
     m_labelFilter = label;
     Q_EMIT labelFilterChanged();
     applyRepoFilter();
+    notifyActiveSavedFilterChanged(previousActive);
 }
 
 void IssueController::setSearchText(const QString &value)
@@ -99,9 +143,238 @@ void IssueController::setSearchText(const QString &value)
     if (trimmed == m_searchText) {
         return;
     }
+    const int previousActive = activeSavedFilter();
     m_searchText = trimmed;
     Q_EMIT searchTextChanged();
     applyRepoFilter();
+    notifyActiveSavedFilterChanged(previousActive);
+}
+
+int IssueController::activeSavedFilter() const
+{
+    // The active tab is derived so edits made through the regular controls
+    // naturally deselect it without storing another mutable state value.
+    for (int i = 0; i < m_savedFilters.size(); ++i) {
+        const QVariantMap filter = m_savedFilters.at(i).toMap();
+        if (filtersEqual(filter, m_repoFilter, m_labelFilter, m_searchText)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+QString IssueController::defaultSavedFilterName() const
+{
+    return defaultSavedFilterName(m_repoFilter, m_labelFilter, m_searchText);
+}
+
+QString IssueController::defaultSavedFilterName(const QString &repo, const QString &label, const QString &search) const
+{
+    QStringList parts;
+    if (!label.isEmpty()) {
+        parts.append(label);
+    }
+    if (!repo.isEmpty()) {
+        parts.append(repo);
+    }
+    if (!search.isEmpty()) {
+        parts.append(search);
+    }
+    return parts.join(QStringLiteral(" · "));
+}
+
+bool IssueController::filtersEqual(const QVariantMap &filter, const QString &repo, const QString &label,
+                                   const QString &search) const
+{
+    return filter.value(QStringLiteral("repo")).toString() == repo
+        && filter.value(QStringLiteral("label")).toString().compare(label, Qt::CaseInsensitive) == 0
+        && filter.value(QStringLiteral("search")).toString().trimmed() == search.trimmed();
+}
+
+int IssueController::maxSavedFilters() const
+{
+    return SavedFilterLimit;
+}
+
+int IssueController::maxSavedFilterNameLength() const
+{
+    return SavedFilterNameLimit;
+}
+
+bool IssueController::saveCurrentFilters(const QString &name)
+{
+    if (m_repoFilter.isEmpty() && m_labelFilter.isEmpty() && m_searchText.isEmpty()) {
+        return false;
+    }
+    if (m_savedFilters.size() >= SavedFilterLimit) {
+        return false;
+    }
+    for (const QVariant &item : m_savedFilters) {
+        if (filtersEqual(item.toMap(), m_repoFilter, m_labelFilter, m_searchText)) {
+            return false;
+        }
+    }
+    QString savedName = name.trimmed();
+    if (savedName.isEmpty()) {
+        savedName = defaultSavedFilterName();
+    }
+    savedName = savedName.left(SavedFilterNameLimit).trimmed();
+    const int previousActive = activeSavedFilter();
+    m_savedFilters.append(QVariantMap{
+        {QStringLiteral("name"), savedName},
+        {QStringLiteral("repo"), m_repoFilter},
+        {QStringLiteral("label"), m_labelFilter},
+        {QStringLiteral("search"), m_searchText}
+    });
+    persistSavedFilters();
+    Q_EMIT savedFiltersChanged();
+    notifyActiveSavedFilterChanged(previousActive);
+    return true;
+}
+
+void IssueController::setFilterValues(const QString &repo, const QString &label, const QString &search)
+{
+    const int previousActive = activeSavedFilter();
+    const bool repoChanged = m_repoFilter != repo;
+    const bool labelChanged = m_labelFilter != label;
+    const bool searchChanged = m_searchText != search;
+    m_repoFilter = repo;
+    m_labelFilter = label;
+    m_searchText = search;
+    if (repoChanged) {
+        Q_EMIT repoFilterChanged();
+    }
+    if (labelChanged) {
+        Q_EMIT labelFilterChanged();
+    }
+    if (searchChanged) {
+        Q_EMIT searchTextChanged();
+    }
+    if (repoChanged || labelChanged || searchChanged) {
+        applyRepoFilter();
+    }
+    notifyActiveSavedFilterChanged(previousActive);
+}
+
+void IssueController::applySavedFilter(int index)
+{
+    if (index < 0 || index >= m_savedFilters.size()) {
+        return;
+    }
+    const QVariantMap filter = m_savedFilters.at(index).toMap();
+    setFilterValues(filter.value(QStringLiteral("repo")).toString(),
+                    filter.value(QStringLiteral("label")).toString(),
+                    filter.value(QStringLiteral("search")).toString());
+}
+
+void IssueController::removeSavedFilter(int index)
+{
+    if (index < 0 || index >= m_savedFilters.size()) {
+        return;
+    }
+    const int previousActive = activeSavedFilter();
+    m_savedFilters.removeAt(index);
+    persistSavedFilters();
+    Q_EMIT savedFiltersChanged();
+    notifyActiveSavedFilterChanged(previousActive);
+}
+
+void IssueController::renameSavedFilter(int index, const QString &name)
+{
+    if (index < 0 || index >= m_savedFilters.size()) {
+        return;
+    }
+    QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        return;
+    }
+    trimmed = trimmed.left(SavedFilterNameLimit).trimmed();
+    QVariantMap filter = m_savedFilters.at(index).toMap();
+    if (filter.value(QStringLiteral("name")).toString() == trimmed) {
+        return;
+    }
+    filter.insert(QStringLiteral("name"), trimmed);
+    m_savedFilters[index] = filter;
+    persistSavedFilters();
+    Q_EMIT savedFiltersChanged();
+}
+
+void IssueController::moveSavedFilter(int from, int to)
+{
+    if (from < 0 || from >= m_savedFilters.size() || to < 0 || to >= m_savedFilters.size() || from == to) {
+        return;
+    }
+    const int activeBeforeMove = activeSavedFilter();
+    m_savedFilters.move(from, to);
+    persistSavedFilters();
+    Q_EMIT savedFiltersChanged();
+    if (activeBeforeMove != activeSavedFilter()) {
+        Q_EMIT activeSavedFilterChanged();
+    }
+}
+
+void IssueController::loadSavedFilters()
+{
+    if (!m_savedFilterStore || !m_auth || m_auth->userLogin().isEmpty()) {
+        return;
+    }
+    m_savedFilterLogin = m_auth->userLogin();
+    const QVariantList stored = m_savedFilterStore->load(m_savedFilterLogin);
+    QVariantList sanitized;
+    for (const QVariant &entry : stored) {
+        if (entry.metaType().id() != QMetaType::QVariantMap) {
+            continue;
+        }
+        const QVariantMap raw = entry.toMap();
+        const QString repo = raw.value(QStringLiteral("repo")).toString().trimmed();
+        const QString label = raw.value(QStringLiteral("label")).toString();
+        const QString search = raw.value(QStringLiteral("search")).toString().trimmed();
+        if (repo.isEmpty() && label.isEmpty() && search.isEmpty()) {
+            continue;
+        }
+        QString name = raw.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty()) {
+            name = defaultSavedFilterName(repo, label, search);
+        }
+        name = name.left(SavedFilterNameLimit).trimmed();
+        const QVariantMap filter{
+            {QStringLiteral("name"), name},
+            {QStringLiteral("repo"), repo},
+            {QStringLiteral("label"), label},
+            {QStringLiteral("search"), search}
+        };
+        bool duplicate = false;
+        for (const QVariant &existing : sanitized) {
+            if (filtersEqual(existing.toMap(), repo, label, search)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+        sanitized.append(filter);
+        if (sanitized.size() >= SavedFilterLimit) {
+            break;
+        }
+    }
+    m_savedFilters = sanitized;
+    Q_EMIT savedFiltersChanged();
+    Q_EMIT activeSavedFilterChanged();
+}
+
+void IssueController::persistSavedFilters()
+{
+    if (m_savedFilterStore && !m_savedFilterLogin.isEmpty()) {
+        m_savedFilterStore->save(m_savedFilterLogin, m_savedFilters);
+    }
+}
+
+void IssueController::notifyActiveSavedFilterChanged(int previous)
+{
+    if (previous != activeSavedFilter()) {
+        Q_EMIT activeSavedFilterChanged();
+    }
 }
 
 void IssueController::createIssue(const QString &repoFullName, const QString &title, const QString &body)
@@ -166,27 +439,110 @@ void IssueController::createIssue(const QString &repoFullName, const QString &ti
 
 void IssueController::reload()
 {
+    reloadInternal(false);
+}
+
+void IssueController::setAutoRefreshMinutes(int minutes)
+{
+    if (minutes != 0 && minutes != 2 && minutes != 5 && minutes != 15 && minutes != 30) {
+        return;
+    }
+    if (minutes == m_autoRefreshMinutes) {
+        return;
+    }
+    m_autoRefreshMinutes = minutes;
+    QSettings settings;
+    settings.setValue(QStringLiteral("issues/autoRefreshMinutes"), minutes);
+    Q_EMIT autoRefreshMinutesChanged();
+}
+
+bool IssueController::canAutoRefresh() const
+{
+    if (m_autoRefreshMinutes <= 0 || m_autoRefreshPaused || m_loading || m_creatingIssue
+        || m_undoInFlight || !m_mutationGuard.isEmpty() || !m_auth || !m_auth->isAuthenticated()
+        || m_auth->pending() || m_auth->status() != AuthSession::Authenticated) {
+        return false;
+    }
+    if (m_rateLimited && m_rateLimitedAt.isValid()
+        && m_rateLimitedAt.secsTo(QDateTime::currentDateTimeUtc()) < m_retryAfterSecs) {
+        return false;
+    }
+    return true;
+}
+
+void IssueController::autoRefreshTick()
+{
+    if (!canAutoRefresh()) {
+        return;
+    }
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    QDateTime baseline = m_lastRefresh;
+    if (m_lastAutoAttempt.isValid() && (!baseline.isValid() || m_lastAutoAttempt > baseline)) {
+        baseline = m_lastAutoAttempt;
+    }
+    if (baseline.isValid() && baseline.secsTo(now) < m_autoRefreshMinutes * 60) {
+        return;
+    }
+    m_lastAutoAttempt = now;
+    reloadInternal(true);
+}
+
+void IssueController::triggerAutoRefreshForTesting()
+{
+    if (!canAutoRefresh()) {
+        return;
+    }
+    m_lastAutoAttempt = QDateTime::currentDateTimeUtc();
+    reloadInternal(true);
+}
+
+void IssueController::handleApplicationActive()
+{
+    if (m_autoRefreshMinutes > 0 && m_lastRefresh.isValid()
+        && m_lastRefresh.secsTo(QDateTime::currentDateTimeUtc()) >= m_autoRefreshMinutes * 60) {
+        autoRefreshTick();
+    }
+}
+
+void IssueController::triggerApplicationActiveForTesting()
+{
+    if (m_lastRefresh.isValid()) {
+        m_lastRefresh = QDateTime::currentDateTimeUtc().addSecs(-m_autoRefreshMinutes * 60 - 1);
+    }
+    handleApplicationActive();
+}
+
+void IssueController::reloadInternal(bool background)
+{
     if (m_loading || !m_client) {
         return; // Double activation guard: one fetch at a time.
     }
     if (!m_auth || !m_auth->isAuthenticated() || m_auth->userLogin().isEmpty()
         || m_auth->currentAccessToken().isEmpty()) {
+        if (background) {
+            return;
+        }
         m_errorMessage = QStringLiteral("Sign in to load issues.");
         Q_EMIT errorMessageChanged();
         return;
     }
     // Do not issue a request with an expired GitHub App access token.
     m_reloadAfterRefresh = true;
+    m_reloadAfterRefreshBackground = background;
     if (!m_auth->ensureFreshAccessToken()) {
         if (m_auth->status() == AuthSession::Refreshing) {
-            m_errorMessage = QStringLiteral("Refreshing GitHub session. Issues will reload when ready.");
-            Q_EMIT errorMessageChanged();
+            if (!background) {
+                m_errorMessage = QStringLiteral("Refreshing GitHub session. Issues will reload when ready.");
+                Q_EMIT errorMessageChanged();
+            }
         } else {
             m_reloadAfterRefresh = false;
+            m_reloadAfterRefreshBackground = false;
         }
         return;
     }
     m_reloadAfterRefresh = false;
+    m_reloadAfterRefreshBackground = false;
     const IssueQuery::View view = m_view == ViewAssigned
         ? IssueQuery::View::Assigned
         : (m_view == ViewCreated ? IssueQuery::View::Created : IssueQuery::View::All);
@@ -197,11 +553,16 @@ void IssueController::reload()
     const int viewAtStart = m_view;
     const int stateAtStart = m_issueState;
     const int generation = ++m_generation;
+    if (background) {
+        Q_EMIT backgroundRefreshStarted();
+    }
     setLoading(true);
-    m_errorMessage.clear();
-    Q_EMIT errorMessageChanged();
+    if (!background) {
+        m_errorMessage.clear();
+        Q_EMIT errorMessageChanged();
+    }
     m_client->fetchIssues(view, state, token, login,
-                          [this, viewAtStart, stateAtStart, generation](
+                          [this, viewAtStart, stateAtStart, generation, background](
                               const GitHubClient::FetchResult &result) {
                               if (generation != m_generation) {
                                   // Superseded by logout (or a newer fetch):
@@ -213,7 +574,7 @@ void IssueController::reload()
                                   // Selection changed mid-load: this data
                                   // belongs to the old selection. Discard it
                                   // and fetch once for the current one.
-                                  reload();
+                                  reloadInternal(false);
                                   return;
                               }
                               if (!result.ok) {
@@ -237,10 +598,25 @@ void IssueController::reload()
                                   if (result.rateLimited) {
                                       m_rateLimited = true;
                                       m_retryAfterSecs = result.retryAfterSecs;
+                                      m_rateLimitedAt = QDateTime::currentDateTimeUtc();
                                       // Fetch-owned outcome (see below).
                                       m_rateLimitedMutationId = 0;
                                   }
                                   Q_EMIT outcomeChanged();
+                                  if (background) {
+                                      const QString reason = result.errorMessage.isEmpty()
+                                          ? QStringLiteral("Could not load issues. Please retry.")
+                                          : result.errorMessage;
+                                      const QString lastUpdated = m_lastRefresh.isValid()
+                                          ? m_lastRefresh.toLocalTime().toString(QLocale().timeFormat(QLocale::ShortFormat))
+                                          : QStringLiteral("never");
+                                      m_warningMessage = QStringLiteral("Automatic refresh failed: %1. Showing issues from %2.")
+                                          .arg(reason, lastUpdated);
+                                      m_warningOwnerId = 0;
+                                      Q_EMIT warningChanged();
+                                      Q_EMIT backgroundRefreshFinished();
+                                      return;
+                                  }
                                   m_warningMessage.clear();
                                   m_warningOwnerId = 0;
                                   Q_EMIT warningChanged();
@@ -249,6 +625,10 @@ void IssueController::reload()
                                       : result.errorMessage;
                                   Q_EMIT errorMessageChanged();
                                   return;
+                              }
+                              if (background && !m_errorMessage.isEmpty()) {
+                                  m_errorMessage.clear();
+                                  Q_EMIT errorMessageChanged();
                               }
                               m_incomplete = result.incomplete;
                               m_capped = result.capped;
@@ -259,6 +639,7 @@ void IssueController::reload()
                                   // partial list).
                                   m_rateLimited = true;
                                   m_retryAfterSecs = result.retryAfterSecs;
+                                  m_rateLimitedAt = QDateTime::currentDateTimeUtc();
                                   // Fetch-owned outcome: a later mutation
                                   // success must not retire it (partial-list
                                   // or load warnings stay until the next
@@ -302,6 +683,7 @@ void IssueController::reload()
                                   m_auth->refreshSession(); // Partial pages may have returned 401.
                               }
                               m_lastRefresh = QDateTime::currentDateTimeUtc();
+                              m_rateLimitedAt = m_rateLimited ? m_rateLimitedAt : QDateTime();
                               Q_EMIT lastRefreshChanged();
                               if (!result.errorMessage.isEmpty()) {
                                   // Partial data: list what loaded, warn.
@@ -317,6 +699,9 @@ void IssueController::reload()
                               // Fetch-owned in every sub-branch above.
                               m_warningOwnerId = 0;
                               Q_EMIT warningChanged();
+                              if (background) {
+                                  Q_EMIT backgroundRefreshFinished();
+                              }
                           });
 }
 
@@ -393,6 +778,7 @@ void IssueController::clearOutcomeFlags()
     m_truncated = false;
     m_rateLimited = false;
     m_retryAfterSecs = 0;
+    m_rateLimitedAt = QDateTime();
     m_rateLimitedMutationId = 0;
     m_warningOwnerId = 0;
     Q_EMIT outcomeChanged();
@@ -535,6 +921,7 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 if (result.rateLimited) {
                     m_rateLimited = true;
                     m_retryAfterSecs = result.retryAfterSecs;
+                    m_rateLimitedAt = QDateTime::currentDateTimeUtc();
                     // This mutation owns the outcome it just set: a later
                     // success retires it only when it is the same
                     // mutation's retry.
@@ -573,6 +960,7 @@ void IssueController::sendStateChange(qlonglong id, bool closed, bool isUndo)
                 m_rateLimited = false;
                 m_retryAfterSecs = 0;
                 m_rateLimitedMutationId = 0;
+                m_rateLimitedAt = QDateTime();
                 Q_EMIT outcomeChanged();
             }
             // Clear the warning only when this mutation also owns it: a
@@ -682,6 +1070,17 @@ int IssueController::loadedRow(qlonglong id) const
 
 void IssueController::clearAllState()
 {
+    const bool hadSavedFilters = !m_savedFilters.isEmpty();
+    const int previousActive = activeSavedFilter();
+    m_savedFilters.clear();
+    if (hadSavedFilters) {
+        Q_EMIT savedFiltersChanged();
+    }
+    if (previousActive != -1) {
+        Q_EMIT activeSavedFilterChanged();
+    }
+    // This is account-derived UI state only; saved tabs remain in QSettings
+    // so the same login can load them again after a later sign-in.
     // Invalidate any in-flight fetch first: its callback must not
     // repopulate the list with the previous token's data, even when the
     // list is currently empty. Bump the generation so the stale callback
@@ -690,6 +1089,7 @@ void IssueController::clearAllState()
     ++m_generation;
     ++m_accountGeneration; // mutations in flight belong to the old account
     m_reloadAfterRefresh = false;
+    m_reloadAfterRefreshBackground = false;
     m_creatingIssue = false;
     m_createError.clear();
     Q_EMIT creationChanged();
@@ -721,6 +1121,8 @@ void IssueController::clearAllState()
     Q_EMIT warningChanged();
     clearOutcomeFlags();
     m_lastRefresh = QDateTime();
+    m_lastAutoAttempt = QDateTime();
+    m_rateLimitedAt = QDateTime();
     Q_EMIT lastRefreshChanged();
     clearUndo();
     Q_EMIT countsChanged();

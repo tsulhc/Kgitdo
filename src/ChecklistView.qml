@@ -19,6 +19,7 @@ ColumnLayout {
     property string openedUrl: ""
     property var openedLabels: []
     property string creationNotice: ""
+    property int editingSavedFilterIndex: -1
 
     function showIssue(title, body, repo, number, url, labels) {
         openedTitle = title
@@ -69,6 +70,12 @@ ColumnLayout {
     function toggleLabelFilter(label) {
         issueController.labelFilter = issueController.labelFilter.toLowerCase() === label.toLowerCase()
             ? "" : label;
+    }
+
+    function openSavedFilterDialog(index, name) {
+        editingSavedFilterIndex = index;
+        savedFilterName.text = name;
+        saveFilterDialog.open();
     }
 
     function emptyStateText() {
@@ -133,6 +140,41 @@ ColumnLayout {
                     onClicked: authSession.logout()
                 }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+                Controls.Label {
+                    textFormat: Text.PlainText
+                    text: i18n("Auto refresh:")
+                    opacity: 0.75
+                    Accessible.name: text
+                }
+                Controls.ComboBox {
+                    id: autoRefreshCombo
+                    model: [i18n("Off"), i18n("2 min"), i18n("5 min"), i18n("15 min"), i18n("30 min")]
+                    currentIndex: {
+                        const values = [0, 2, 5, 15, 30];
+                        return Math.max(0, values.indexOf(issueController.autoRefreshMinutes));
+                    }
+                    onActivated: function(index) {
+                        issueController.autoRefreshMinutes = [0, 2, 5, 15, 30][index];
+                    }
+                    Accessible.name: i18n("Automatic refresh interval")
+                    Controls.ToolTip.visible: hovered
+                    Controls.ToolTip.text: i18n("Automatically checks for issue updates while Kgitdo is open.")
+                }
+                Item { Layout.fillWidth: true }
+                Controls.Label {
+                    textFormat: Text.PlainText
+                    visible: !isNaN(issueController.lastRefresh.getTime())
+                    text: !isNaN(issueController.lastRefresh.getTime())
+                        ? i18n("Updated %1", issueController.lastRefresh.toLocaleTimeString(Qt.locale(), Locale.ShortFormat))
+                        : i18n("Not updated yet")
+                    opacity: 0.65
+                    font.pixelSize: 12
+                    Accessible.name: text
+                }
+            }
             Controls.Label {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
@@ -178,6 +220,87 @@ ColumnLayout {
         Layout.fillWidth: true
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.smallSpacing
+            Flow {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+                Controls.Button {
+                    text: i18n("All issues")
+                    highlighted: issueController.repoFilter.length === 0
+                        && issueController.labelFilter.length === 0 && issueController.searchText.length === 0
+                    onClicked: {
+                        issueController.repoFilter = "";
+                        issueController.labelFilter = "";
+                        issueController.searchText = "";
+                    }
+                    Accessible.name: text
+                    Controls.ToolTip.text: i18n("Clear repository, label and search filters.")
+                    Controls.ToolTip.visible: hovered
+                }
+                Repeater {
+                    model: issueController.savedFilters
+                    delegate: RowLayout {
+                        required property int index
+                        required property var modelData
+                        spacing: 0
+                        Controls.Button {
+                            text: modelData.name
+                            highlighted: issueController.activeSavedFilter === index
+                            onClicked: issueController.applySavedFilter(index)
+                            Accessible.name: i18n("Apply saved filter: %1", modelData.name)
+                            Controls.ToolTip.text: i18n("Apply saved filter: %1", modelData.name)
+                            Controls.ToolTip.visible: hovered
+                        }
+                        Controls.ToolButton {
+                            text: i18n("Remove")
+                            icon.name: "tab-close"
+                            display: Controls.AbstractButton.IconOnly
+                            onClicked: issueController.removeSavedFilter(index)
+                            Accessible.name: i18n("Remove saved filter: %1", modelData.name)
+                            Controls.ToolTip.text: i18n("Remove saved filter: %1", modelData.name)
+                            Controls.ToolTip.visible: hovered
+                        }
+                        Controls.ToolButton {
+                            text: i18n("Saved filter options")
+                            icon.name: "overflow-menu"
+                            display: Controls.AbstractButton.IconOnly
+                            onClicked: filterMenu.open()
+                            Accessible.name: i18n("Options for saved filter: %1", modelData.name)
+                            Controls.ToolTip.text: i18n("Options for saved filter: %1", modelData.name)
+                            Controls.ToolTip.visible: hovered
+                        }
+                        Controls.Menu {
+                            id: filterMenu
+                            Controls.MenuItem {
+                                text: i18n("Rename…")
+                                onTriggered: checklist.openSavedFilterDialog(index, modelData.name)
+                                Accessible.name: i18n("Rename saved filter: %1", modelData.name)
+                                Controls.ToolTip.text: i18n("Choose a new name for this saved filter.")
+                                Controls.ToolTip.visible: hovered
+                            }
+                            Controls.MenuItem {
+                                text: i18n("Remove")
+                                onTriggered: issueController.removeSavedFilter(index)
+                                Accessible.name: i18n("Remove saved filter: %1", modelData.name)
+                                Controls.ToolTip.text: i18n("Remove this saved filter tab.")
+                                Controls.ToolTip.visible: hovered
+                            }
+                        }
+                    }
+                }
+                Controls.Button {
+                    text: i18n("Save as tab")
+                    enabled: (issueController.repoFilter.length > 0 || issueController.labelFilter.length > 0
+                              || issueController.searchText.length > 0)
+                        && issueController.activeSavedFilter < 0
+                        && issueController.savedFilters.length < issueController.maxSavedFilters
+                    onClicked: {
+                        checklist.openSavedFilterDialog(-1, issueController.defaultSavedFilterName());
+                    }
+                    Accessible.name: text
+                    Controls.ToolTip.text: i18n("Save the current client-side filters as a tab.")
+                    Controls.ToolTip.visible: hovered
+                }
+            }
             Flow {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
@@ -279,6 +402,31 @@ ColumnLayout {
                 opacity: 0.8
                 Accessible.name: text
             }
+        }
+    }
+
+    Controls.Dialog {
+        id: saveFilterDialog
+        title: checklist.editingSavedFilterIndex < 0 ? i18n("Save filter tab") : i18n("Rename filter tab")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(Kirigami.Units.gridUnit * 24, checklist.width - Kirigami.Units.largeSpacing * 2)
+        standardButtons: Controls.DialogButtonBox.Ok | Controls.DialogButtonBox.Cancel
+        onOpened: savedFilterName.forceActiveFocus()
+        onAccepted: {
+            if (checklist.editingSavedFilterIndex < 0) {
+                issueController.saveCurrentFilters(savedFilterName.text);
+            } else {
+                issueController.renameSavedFilter(checklist.editingSavedFilterIndex, savedFilterName.text);
+            }
+        }
+        contentItem: Controls.TextField {
+            id: savedFilterName
+            placeholderText: i18n("Tab name")
+            Accessible.name: i18n("Saved filter tab name")
+            selectByMouse: true
+            maximumLength: issueController.maxSavedFilterNameLength
+            onAccepted: saveFilterDialog.accept()
         }
     }
 
@@ -613,6 +761,8 @@ ColumnLayout {
         width: Math.min(680, checklist.width - 36)
         anchors.centerIn: parent
         standardButtons: Controls.Dialog.NoButton
+        onOpened: issueController.setAutoRefreshPaused(true)
+        onClosed: issueController.setAutoRefreshPaused(false)
         contentItem: ColumnLayout {
             spacing: Kirigami.Units.largeSpacing
             Controls.Label {
@@ -691,5 +841,17 @@ ColumnLayout {
         }
     }
 
+    property real savedIssueListContentY: 0
+    Connections {
+        target: issueController
+        function onBackgroundRefreshStarted() {
+            checklist.savedIssueListContentY = issueList.contentY;
+        }
+        function onBackgroundRefreshFinished() {
+            Qt.callLater(function() {
+                issueList.contentY = checklist.savedIssueListContentY;
+            });
+        }
+    }
 
 }

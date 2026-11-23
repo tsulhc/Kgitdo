@@ -77,6 +77,53 @@ private Q_SLOTS:
         QVERIFY(qml.contains(QStringLiteral("Clear filters")));
         QVERIFY(qml.contains(QStringLiteral("Accessible.name: selected")));
     }
+
+    void savedFilterTabsHaveAccessiblePlainTextControls()
+    {
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        QVERIFY(qml.contains(QStringLiteral("issueController.savedFilters")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.activeSavedFilter")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.applySavedFilter(index)")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.removeSavedFilter(index)")));
+        QVERIFY(qml.contains(QStringLiteral("Accessible.name: i18n(\"Apply saved filter: %1\"")));
+        QVERIFY(qml.contains(QStringLiteral("Accessible.name: i18n(\"Remove saved filter: %1\"")));
+        QVERIFY(qml.contains(QStringLiteral("text: i18n(\"Rename…\")")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.renameSavedFilter(checklist.editingSavedFilterIndex")));
+        QVERIFY(qml.contains(QStringLiteral("icon.name: \"tab-close\"")));
+        QVERIFY(qml.contains(QStringLiteral("icon.name: \"overflow-menu\"")));
+        QVERIFY(qml.contains(QStringLiteral("display: Controls.AbstractButton.IconOnly")));
+        QVERIFY(qml.contains(QStringLiteral("maximumLength: issueController.maxSavedFilterNameLength")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.maxSavedFilters")));
+        QVERIFY(qml.contains(QStringLiteral("Accessible.name: text")));
+        QVERIFY(qml.contains(QStringLiteral("textFormat: Text.PlainText")));
+    }
+
+    void automaticRefreshHasAccessibleControls()
+    {
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        QVERIFY(qml.contains(QStringLiteral("issueController.autoRefreshMinutes")));
+        QVERIFY(qml.contains(QStringLiteral("Automatic refresh interval")));
+        QVERIFY(qml.contains(QStringLiteral("i18n(\"Off\")")));
+        QVERIFY(qml.contains(QStringLiteral("issueController.lastRefresh")));
+        QVERIFY(qml.contains(QStringLiteral("onBackgroundRefreshStarted")));
+        QVERIFY(qml.contains(QStringLiteral("issueList.contentY = checklist.savedIssueListContentY")));
+    }
+
+    void lastRefreshUsesJavaScriptDateFormatting()
+    {
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        // QDateTime properties are exposed as JavaScript Date objects in QML.
+        // Keep this static check because the runtime auth-page test doesn't
+        // load a GitHub issue response to make lastRefresh valid.
+        QVERIFY(qml.contains(QStringLiteral("issueController.lastRefresh.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)")));
+        QVERIFY(!qml.contains(QStringLiteral("toLocalTime(")));
+    }
 };
 
 QTEST_MAIN(QmlSecurityTest)

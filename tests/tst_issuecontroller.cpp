@@ -1,4 +1,9 @@
 #include <QtTest>
+#include <QByteArray>
+#include <QTemporaryDir>
+#include <QSettings>
+#include <QSignalSpy>
+#include <QStandardPaths>
 
 #include "AuthSession.h"
 #include "GitHubClient.h"
@@ -306,6 +311,12 @@ class IssueControllerTest : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void initTestCase();
+    void autoRefreshSettingPersistsAndTickLoads();
+    void autoRefreshSkipsBusyAndRateLimited();
+    void backgroundFailureKeepsFilteredListAndSuccessClearsWarning();
+    void applicationActivationRefreshesStaleList();
+    void backgroundRefreshSelectionChangeRefetchesInForeground();
     void reloadLoadsAndPopulates();
     void viewChangeReloadsSingleQuery();
     void stateChangeReloads();
@@ -314,6 +325,11 @@ private Q_SLOTS:
     void labelFilterCombinesWithRepoAndPreservesExactName();
     void labelFilterPersistsAcrossReloadAndUnknownChoice();
     void labelFilterKeepsPendingMutationAndUndoLabels();
+    void savedFiltersSaveApplyAndTrackActive();
+    void savedFiltersManageAndPersist();
+    void savedFiltersCapAtTwenty();
+    void savedFiltersSanitizeSettings();
+    void savedFiltersReloadAfterSameAccountSignIn();
     void unknownRepoShowsEmptyButKeepsLoaded();
     void errorPropagates();
     void unauthorizedMessage();
@@ -363,6 +379,377 @@ private Q_SLOTS:
     void logoutClearsPendingAndUndo();
     void reloginDiscardsInFlightMutation();
 };
+
+void IssueControllerTest::savedFiltersSaveApplyAndTrackActive()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    SavedFilterStore store(dir.filePath(QStringLiteral("filters.ini")));
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r", "2026-10-01T10:00:00Z", "type:grade"),
+                                      itemJson(2, 2, "B", "o/other", "2026-10-01T10:00:00Z", "proto:cosmos")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client, &store, nullptr);
+    controller.reload();
+    QVERIFY(!controller.saveCurrentFilters(QString()));
+    controller.setRepoFilter(QStringLiteral("o/r"));
+    controller.setLabelFilter(QStringLiteral("TYPE:grade"));
+    controller.setSearchText(QStringLiteral(" A "));
+    QVERIFY(controller.saveCurrentFilters(QStringLiteral("  My tab  ")));
+    QCOMPARE(controller.savedFilters().at(0).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("My tab"));
+    QCOMPARE(controller.activeSavedFilter(), 0);
+    const int requestCount = api.requestedUrls.size();
+    controller.setRepoFilter(QStringLiteral("o/other"));
+    QCOMPARE(controller.activeSavedFilter(), -1);
+    controller.setRepoFilter(QStringLiteral("o/r"));
+    QVERIFY(!controller.saveCurrentFilters(QStringLiteral("duplicate candidate")));
+    controller.applySavedFilter(0);
+    QCOMPARE(controller.repoFilter(), QStringLiteral("o/r"));
+    QCOMPARE(controller.labelFilter(), QStringLiteral("TYPE:grade"));
+    QCOMPARE(controller.searchText(), QStringLiteral("A"));
+    QCOMPARE(controller.visibleCount(), 1);
+    QCOMPARE(api.requestedUrls.size(), requestCount);
+    controller.setLabelFilter(QStringLiteral("type:GRADE"));
+    QCOMPARE(controller.activeSavedFilter(), 0);
+}
+
+void IssueControllerTest::savedFiltersManageAndPersist()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString settingsFile = dir.filePath(QStringLiteral("filters.ini"));
+    SavedFilterStore store(settingsFile);
+    FakeIssueApi api;
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("alice"), this);
+    IssueController controller(auth, &client, &store, nullptr);
+    controller.setLabelFilter(QStringLiteral("type:grade"));
+    QVERIFY(controller.saveCurrentFilters(QString()));
+    QCOMPARE(controller.savedFilters().at(0).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("type:grade"));
+    controller.setRepoFilter(QStringLiteral("org/repo"));
+    QVERIFY(controller.saveCurrentFilters(QStringLiteral("second")));
+    controller.renameSavedFilter(1, QStringLiteral(" renamed "));
+    QCOMPARE(controller.savedFilters().at(1).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("renamed"));
+    controller.moveSavedFilter(1, 0);
+    QCOMPARE(controller.savedFilters().at(0).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("renamed"));
+    QCOMPARE(controller.activeSavedFilter(), 0);
+
+    IssueController restored(auth, &client, &store, nullptr);
+    QCOMPARE(restored.savedFilters().size(), 2);
+    QCOMPARE(store.load(QStringLiteral("bob")).size(), 0);
+    restored.removeSavedFilter(1);
+    QCOMPARE(store.load(QStringLiteral("alice")).size(), 1);
+}
+
+void IssueControllerTest::savedFiltersCapAtTwenty()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    SavedFilterStore store(dir.filePath(QStringLiteral("filters.ini")));
+    FakeIssueApi api;
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client, &store, nullptr);
+    for (int i = 0; i < 20; ++i) {
+        controller.setSearchText(QString::number(i));
+        QVERIFY(controller.saveCurrentFilters(QStringLiteral("tab")));
+    }
+    controller.setSearchText(QStringLiteral("21"));
+    QVERIFY(!controller.saveCurrentFilters(QStringLiteral("overflow")));
+    QCOMPARE(controller.savedFilters().size(), 20);
+}
+
+void IssueControllerTest::savedFiltersSanitizeSettings()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString settingsFile = dir.filePath(QStringLiteral("filters.ini"));
+    QSettings settings(settingsFile, QSettings::IniFormat);
+    settings.beginGroup(QStringLiteral("SavedFilters"));
+    settings.beginGroup(QString::fromLatin1(QByteArray("alice").toHex()));
+    const QVariantMap missingName{
+        {QStringLiteral("repo"), QStringLiteral("  org/repo  ")},
+        {QStringLiteral("label"), QStringLiteral("type:grade")},
+        {QStringLiteral("search"), QStringLiteral("  title  ")}
+    };
+    const QVariantMap duplicate{
+        {QStringLiteral("name"), QStringLiteral("duplicate")},
+        {QStringLiteral("repo"), QStringLiteral("org/repo")},
+        {QStringLiteral("label"), QStringLiteral("TYPE:GRADE")},
+        {QStringLiteral("search"), QStringLiteral("title")}
+    };
+    const QVariantMap empty{
+        {QStringLiteral("name"), QStringLiteral("empty")},
+        {QStringLiteral("repo"), QStringLiteral("  ")},
+        {QStringLiteral("label"), QString()},
+        {QStringLiteral("search"), QStringLiteral(" ")}
+    };
+    const QVariantMap other{
+        {QStringLiteral("name"), QString(70, QLatin1Char('x'))},
+        {QStringLiteral("repo"), 42},
+        {QStringLiteral("label"), 99},
+        {QStringLiteral("search"), QStringLiteral("   ")}
+    };
+    settings.setValue(QStringLiteral("items"),
+                      QVariantList{QStringLiteral("not a map"), missingName, duplicate, empty, other});
+    settings.endGroup();
+    settings.endGroup();
+    settings.sync();
+
+    SavedFilterStore filterStore(settingsFile);
+    FakeIssueApi api;
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("alice"), this);
+    IssueController controller(auth, &client, &filterStore, nullptr);
+    QCOMPARE(controller.savedFilters().size(), 2);
+    const QVariantMap first = controller.savedFilters().at(0).toMap();
+    QCOMPARE(first.value(QStringLiteral("name")).toString(), QStringLiteral("type:grade · org/repo · title"));
+    QCOMPARE(first.value(QStringLiteral("repo")).toString(), QStringLiteral("org/repo"));
+    QCOMPARE(first.value(QStringLiteral("search")).toString(), QStringLiteral("title"));
+    const QVariantMap second = controller.savedFilters().at(1).toMap();
+    QCOMPARE(second.value(QStringLiteral("repo")).toString(), QStringLiteral("42"));
+    QCOMPARE(second.value(QStringLiteral("label")).toString(), QStringLiteral("99"));
+    QCOMPARE(second.value(QStringLiteral("name")).toString().size(), controller.maxSavedFilterNameLength());
+}
+
+void IssueControllerTest::savedFiltersReloadAfterSameAccountSignIn()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString settingsFile = dir.filePath(QStringLiteral("filters.ini"));
+    SavedFilterStore filterStore(settingsFile);
+    const QVariantMap tab{
+        {QStringLiteral("name"), QStringLiteral("Alice tab")},
+        {QStringLiteral("repo"), QStringLiteral("org/repo")},
+        {QStringLiteral("label"), QStringLiteral("type:grade")},
+        {QStringLiteral("search"), QString()}
+    };
+    filterStore.save(QStringLiteral("alice"), QVariantList{tab});
+
+    auto *network = new TinyAuthNetwork(this);
+    auto *secureStore = new InMemorySecureStore(this);
+    StoredTokens tokens;
+    tokens.accessToken = QStringLiteral("tok-alice");
+    tokens.refreshToken = QStringLiteral("ref-alice");
+    tokens.login = QStringLiteral("alice");
+    secureStore->save(tokens);
+    IAuthNetwork::UserResult aliceUser;
+    aliceUser.ok = true;
+    aliceUser.login = QStringLiteral("alice");
+    network->userQueue.append(aliceUser);
+    auto *auth = new AuthSession(network, secureStore, this);
+    auth->setClientId(QStringLiteral("cid"));
+    auth->restore();
+    QVERIFY(auth->isAuthenticated());
+
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    IssueController controller(auth, &client, &filterStore, nullptr);
+    QCOMPARE(controller.savedFilters().size(), 1);
+    auth->logout();
+    QVERIFY(controller.savedFilters().isEmpty());
+
+    IAuthNetwork::DeviceCodeResult device;
+    device.ok = true;
+    device.data.deviceCode = QStringLiteral("device-code");
+    device.data.userCode = QStringLiteral("AAAA-BBBB");
+    device.data.verificationUri = QStringLiteral("https://github.com/login/device");
+    device.data.expiresInSeconds = 900;
+    device.data.intervalSeconds = 3600;
+    network->deviceQueue.append(device);
+    IAuthNetwork::TokenResult loginToken;
+    loginToken.ok = true;
+    loginToken.data.hasToken = true;
+    loginToken.data.accessToken = QStringLiteral("tok-alice-again");
+    loginToken.data.refreshToken = QStringLiteral("ref-alice-again");
+    loginToken.data.expiresInSeconds = 3600;
+    network->pollQueue.append(loginToken);
+    network->userQueue.append(aliceUser);
+    auth->startLogin();
+    QCOMPARE(auth->status(), AuthSession::AwaitingAuthorization);
+    auth->pollOnce();
+    QVERIFY(auth->isAuthenticated());
+    QCOMPARE(auth->userLogin(), QStringLiteral("alice"));
+    QCOMPARE(controller.savedFilters().size(), 1);
+    QCOMPARE(controller.savedFilters().at(0).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Alice tab"));
+    QCOMPARE(filterStore.load(QStringLiteral("alice")).size(), 1);
+}
+
+void IssueControllerTest::initTestCase()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    QSettings settings;
+    settings.setValue(QStringLiteral("issues/autoRefreshMinutes"), 5);
+}
+
+void IssueControllerTest::autoRefreshSettingPersistsAndTickLoads()
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("issues/autoRefreshMinutes"), 5);
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    QCOMPARE(controller.autoRefreshMinutes(), 5);
+    controller.setAutoRefreshMinutes(2);
+    QCOMPARE(settings.value(QStringLiteral("issues/autoRefreshMinutes")).toInt(), 2);
+    IssueController restored(auth, &client);
+    QCOMPARE(restored.autoRefreshMinutes(), 2);
+    controller.reload();
+    const int before = api.requestedUrls.size();
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(api.requestedUrls.size(), before + 2);
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.setAutoRefreshMinutes(0);
+    const int disabledAt = api.requestedUrls.size();
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(api.requestedUrls.size(), disabledAt);
+    controller.setAutoRefreshMinutes(5);
+}
+
+void IssueControllerTest::autoRefreshSkipsBusyAndRateLimited()
+{
+    FakeIssueApi api;
+    api.defer = true;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    const int loadingCount = api.requestedUrls.size();
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(api.requestedUrls.size(), loadingCount);
+    api.fireAll();
+
+    api.deferUpdate = true;
+    api.updateQueue.append(httpUpdate("closed"));
+    controller.closeIssue(rowId(controller, 0));
+    const int mutationCount = api.requestedUrls.size();
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(api.requestedUrls.size(), mutationCount);
+    api.fireUpdates();
+
+    FakeIssueApi limitedApi;
+    limitedApi.queue.append(httpRateLimited(3600));
+    limitedApi.queue.append(httpRateLimited(3600));
+    GitHubClient limitedClient(&limitedApi);
+    AuthSession *limitedAuth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController limitedController(limitedAuth, &limitedClient);
+    limitedController.reload();
+    const int rateLimitedCount = limitedApi.requestedUrls.size();
+    limitedController.triggerAutoRefreshForTesting();
+    QCOMPARE(limitedApi.requestedUrls.size(), rateLimitedCount);
+
+    FakeIssueApi signedOutApi;
+    GitHubClient signedOutClient(&signedOutApi);
+    auto *signedOutAuth = new AuthSession(new TinyAuthNetwork(this), new InMemorySecureStore(this), this);
+    IssueController signedOutController(signedOutAuth, &signedOutClient);
+    signedOutController.triggerAutoRefreshForTesting();
+    QVERIFY(signedOutApi.requestedUrls.isEmpty());
+}
+
+void IssueControllerTest::backgroundFailureKeepsFilteredListAndSuccessClearsWarning()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    SavedFilterStore store(dir.filePath(QStringLiteral("filters.ini")));
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r", "2026-10-01T10:00:00Z", "keep-filter"),
+                                      itemJson(2, 8, "B", "o/other", "2026-10-01T10:00:00Z", "keep-filter")})));
+    api.queue.append(httpOk(pageJson({})));
+    IssueHttpResult failed;
+    failed.transportError = QStringLiteral("offline");
+    api.queue.append(failed);
+    api.queue.append(failed);
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r", "2026-10-01T10:00:00Z", "keep-filter"),
+                                      itemJson(2, 8, "B", "o/other", "2026-10-01T10:00:00Z", "keep-filter")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client, &store, nullptr);
+    controller.reload();
+    controller.setRepoFilter(QStringLiteral("o/r"));
+    controller.setLabelFilter(QStringLiteral("keep-filter"));
+    QVERIFY(controller.saveCurrentFilters(QStringLiteral("Focused")));
+    QCOMPARE(controller.activeSavedFilter(), 0);
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(controller.loadedCount(), 2);
+    QCOMPARE(controller.visibleCount(), 1);
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(controller.warningMessage().contains(QStringLiteral("Automatic refresh failed")));
+    QCOMPARE(controller.repoFilter(), QStringLiteral("o/r"));
+    QCOMPARE(controller.labelFilter(), QStringLiteral("keep-filter"));
+    QCOMPARE(controller.activeSavedFilter(), 0);
+    controller.triggerAutoRefreshForTesting();
+    QCOMPARE(controller.loadedCount(), 2);
+    QVERIFY(controller.errorMessage().isEmpty());
+    QVERIFY(!controller.hasWarning());
+    QCOMPARE(controller.activeSavedFilter(), 0);
+}
+
+void IssueControllerTest::applicationActivationRefreshesStaleList()
+{
+    FakeIssueApi api;
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.setAutoRefreshMinutes(2);
+    controller.reload();
+    const int before = api.requestedUrls.size();
+    controller.triggerApplicationActiveForTesting();
+    QCOMPARE(api.requestedUrls.size(), before + 2);
+    QCOMPARE(controller.loadedCount(), 1);
+    controller.setAutoRefreshMinutes(5);
+}
+
+void IssueControllerTest::backgroundRefreshSelectionChangeRefetchesInForeground()
+{
+    FakeIssueApi api;
+    api.defer = true;
+    // Initial All-view load needs author + assignee pages.
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.errorMessage().isEmpty());
+
+    // The automatic All-view refresh also needs two pages. The subsequent
+    // Assigned-view foreground refetch fails and must surface a blocking
+    // error rather than leaving the old list presented as current.
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    IssueHttpResult failed;
+    failed.transportError = QStringLiteral("offline");
+    api.queue.append(failed);
+    QSignalSpy backgroundFinished(&controller, &IssueController::backgroundRefreshFinished);
+    controller.triggerAutoRefreshForTesting();
+    QVERIFY(controller.loading());
+    controller.setView(IssueController::ViewAssigned);
+    api.fireAll();
+
+    QCOMPARE(api.requestedUrls.size(), 5);
+    QVERIFY(api.requestedUrls.at(4).query().contains(QStringLiteral("assignee")));
+    QVERIFY(!controller.loading());
+    QVERIFY(!controller.errorMessage().isEmpty());
+    QCOMPARE(backgroundFinished.size(), 0);
+}
 
 void IssueControllerTest::reloadLoadsAndPopulates()
 {
@@ -1087,18 +1474,24 @@ void IssueControllerTest::logoutClearsRepoFilter()
 
 void IssueControllerTest::logoutClearsLabelFilter()
 {
+    QTemporaryDir filterDir;
+    QVERIFY(filterDir.isValid());
+    SavedFilterStore filterStore(filterDir.filePath(QStringLiteral("filters.ini")));
     FakeIssueApi api;
     api.queue.append(httpOk(pageJson({itemJson(1, 1, "A", "o/r", "2026-10-01T10:00:00Z", "bug")})));
     api.queue.append(httpOk(pageJson({})));
     GitHubClient client(&api);
     AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
-    IssueController controller(auth, &client);
+    IssueController controller(auth, &client, &filterStore, nullptr);
     controller.reload();
     controller.setLabelFilter(QStringLiteral("bug"));
+    QVERIFY(controller.saveCurrentFilters(QString()));
     QCOMPARE(controller.availableLabels(), QStringList({QStringLiteral("bug")}));
     auth->logout();
     QVERIFY(controller.labelFilter().isEmpty());
     QVERIFY(controller.availableLabels().isEmpty());
+    QVERIFY(controller.savedFilters().isEmpty());
+    QCOMPARE(filterStore.load(QStringLiteral("octocat")).size(), 1);
 }
 
 void IssueControllerTest::refreshPreservesIssues()
@@ -1175,10 +1568,14 @@ void IssueControllerTest::reloginAsDifferentUserClearsAndReloads()
     auth->setClientId(QStringLiteral("cid"));
     auth->restore();
     QVERIFY(auth->isAuthenticated());
-    IssueController controller(auth, &client);
+    QTemporaryDir filterDir;
+    QVERIFY(filterDir.isValid());
+    SavedFilterStore filterStore(filterDir.filePath(QStringLiteral("filters.ini")));
+    IssueController controller(auth, &client, &filterStore, nullptr);
     controller.reload();
     QCOMPARE(controller.loadedCount(), 1);
     controller.setLabelFilter(QStringLiteral("alice-label"));
+    QVERIFY(controller.saveCurrentFilters(QString()));
     // Refresh fails but the session (and the list) survives it.
     IAuthNetwork::TokenResult refreshFail;
     refreshFail.ok = false;
@@ -1221,6 +1618,9 @@ void IssueControllerTest::reloginAsDifferentUserClearsAndReloads()
     // The controller cleared alice's state and reloaded for bob.
     QCOMPARE(controller.loadedCount(), 1);
     QVERIFY(controller.labelFilter().isEmpty());
+    QVERIFY(controller.savedFilters().isEmpty());
+    QCOMPARE(filterStore.load(QStringLiteral("alice")).size(), 1);
+    QCOMPARE(filterStore.load(QStringLiteral("bob")).size(), 0);
     QVERIFY(!controller.availableLabels().contains(QStringLiteral("alice-label")));
     QCOMPARE(controller.model()
                  ->data(controller.model()->index(0), IssueListModel::TitleRole)

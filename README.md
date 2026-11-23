@@ -36,7 +36,7 @@ The first usable version should support:
 1. **GitHub sign-in** using a suitable secure authorization flow.
 2. **Unified to-do list** of open issues **assigned to me** or **created by me**, deduplicated when both apply.
 3. **Useful task context:** issue title, repository, issue number, labels, and a link to the original issue.
-4. **Simple views and filters:** all my issues, assigned to me, created by me, and repository filter.
+4. **Simple views and filters:** all my issues, assigned to me, created by me, repository and label filters, quick search, and persistent saved filter tabs.
 5. **Task completion:** close an issue on GitHub from the app, with a clear indication of success or failure.
 6. **Reopen issues** and refresh the list to reflect remote changes.
 7. **Native KDE desktop experience** with appropriate keyboard navigation, theme support, and accessible controls.
@@ -108,9 +108,11 @@ Security: tokens never live in plain files, logs, QSettings, or CI. `401` (revok
 
 ## Reading issues (search API)
 
-After sign-in the app loads open issues **assigned to you or created by you** across the repositories the GitHub App installation can see, using two `GET /search/issues` queries (`author:<login>` and `assignee:<login>`, `is:issue`, newest first, 100 per page) whose results are merged and deduplicated by stable issue id — an issue from both queries appears exactly once with both provenances. Pull-request entries are never shown. Views (All / Assigned / Created) and Open / Closed reload from GitHub; the repository filter applies to loaded data, with loaded/visible counts, so a narrow filter is never confused with an empty account.
+After sign-in the app loads open issues **assigned to you or created by you** across the repositories the GitHub App installation can see, using two `GET /search/issues` queries (`author:<login>` and `assignee:<login>`, `is:issue`, newest first, 100 per page) whose results are merged and deduplicated by stable issue id — an issue from both queries appears exactly once with both provenances. Pull-request entries are never shown. Views (All / Assigned / Created) and Open / Closed reload from GitHub; repository, label, and text filters apply to loaded data, with loaded/visible counts, so a narrow filter is never confused with an empty account. Save a frequently used client-side filter combination as a tab and click it to reapply without another request; saved tabs are stored separately for each GitHub login.
 
 Partial results are always explicit: the UI warns when GitHub reports `incomplete_results`, when the 1,000-result search cap is hit, or when pagination is interrupted (data loaded so far stays visible). `401` asks for sign-in again; rate limits (`429`/`403` quota, `Retry-After` / `X-RateLimit-Reset`) surface a wait-and-retry warning instead of retrying in a loop.
+
+Automatic refresh can be set to Off, 2, 5, 15, or 30 minutes (5 minutes by default) from the checklist header. It polls while the app is open, skips while a request or issue mutation is active, and checks once on returning to the active window when the list is stale. Failed automatic polls keep the current list visible and show a warning; manual Refresh retains its normal error behavior.
 
 ## Completing and reopening issues (PATCH)
 
@@ -125,7 +127,7 @@ Guards and feedback: the row shows a spinner while its PATCH is in flight and a 
 - **Rate limits:** when GitHub throttles requests, the app shows the server-suggested wait and does not retry mutations on its own. Wait for the delay, then use **Refresh** or retry the checkbox.
 - **One account at a time:** signing in as a different user clears the previous account's list, filters, and undo state. Sign-out removes local credentials only; revoke the authorization itself on github.com.
 - **Locked or missing wallet:** if KWallet cannot be opened, the session stays in memory only and sign-out warns until saved credentials can actually be removed (a retry button is offered).
-- **No offline mode:** the list always reflects GitHub at load time; without a network connection it shows an error instead of stale data. There are no background refreshes, notifications, or widgets in 0.1.
+- **No offline mode:** the list is not cached across app restarts. An automatic refresh failure keeps the current session's list visible with a warning; notifications and widgets are not provided.
 
 ## Non-goals
 
