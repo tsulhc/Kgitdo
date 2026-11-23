@@ -2,6 +2,7 @@
 #include <QByteArray>
 #include <QTemporaryDir>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QStandardPaths>
 
 #include "AuthSession.h"
@@ -315,6 +316,7 @@ private Q_SLOTS:
     void autoRefreshSkipsBusyAndRateLimited();
     void backgroundFailureKeepsFilteredListAndSuccessClearsWarning();
     void applicationActivationRefreshesStaleList();
+    void backgroundRefreshSelectionChangeRefetchesInForeground();
     void reloadLoadsAndPopulates();
     void viewChangeReloadsSingleQuery();
     void stateChangeReloads();
@@ -711,6 +713,42 @@ void IssueControllerTest::applicationActivationRefreshesStaleList()
     QCOMPARE(api.requestedUrls.size(), before + 2);
     QCOMPARE(controller.loadedCount(), 1);
     controller.setAutoRefreshMinutes(5);
+}
+
+void IssueControllerTest::backgroundRefreshSelectionChangeRefetchesInForeground()
+{
+    FakeIssueApi api;
+    api.defer = true;
+    // Initial All-view load needs author + assignee pages.
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    GitHubClient client(&api);
+    AuthSession *auth = authenticatedSession(QStringLiteral("octocat"), this);
+    IssueController controller(auth, &client);
+    controller.reload();
+    api.fireAll();
+    QCOMPARE(controller.loadedCount(), 1);
+    QVERIFY(controller.errorMessage().isEmpty());
+
+    // The automatic All-view refresh also needs two pages. The subsequent
+    // Assigned-view foreground refetch fails and must surface a blocking
+    // error rather than leaving the old list presented as current.
+    api.queue.append(httpOk(pageJson({itemJson(1, 7, "A", "o/r")})));
+    api.queue.append(httpOk(pageJson({})));
+    IssueHttpResult failed;
+    failed.transportError = QStringLiteral("offline");
+    api.queue.append(failed);
+    QSignalSpy backgroundFinished(&controller, &IssueController::backgroundRefreshFinished);
+    controller.triggerAutoRefreshForTesting();
+    QVERIFY(controller.loading());
+    controller.setView(IssueController::ViewAssigned);
+    api.fireAll();
+
+    QCOMPARE(api.requestedUrls.size(), 5);
+    QVERIFY(api.requestedUrls.at(4).query().contains(QStringLiteral("assignee")));
+    QVERIFY(!controller.loading());
+    QVERIFY(!controller.errorMessage().isEmpty());
+    QCOMPARE(backgroundFinished.size(), 0);
 }
 
 void IssueControllerTest::reloadLoadsAndPopulates()

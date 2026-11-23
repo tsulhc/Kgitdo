@@ -168,7 +168,7 @@ ColumnLayout {
                     textFormat: Text.PlainText
                     visible: !isNaN(issueController.lastRefresh.getTime())
                     text: !isNaN(issueController.lastRefresh.getTime())
-                        ? i18n("Updated %1", issueController.lastRefresh.toLocalTime().toLocaleString(Qt.locale(), Locale.ShortFormat))
+                        ? i18n("Updated %1", issueController.lastRefresh.toLocaleTimeString(Qt.locale(), Locale.ShortFormat))
                         : i18n("Not updated yet")
                     opacity: 0.65
                     font.pixelSize: 12

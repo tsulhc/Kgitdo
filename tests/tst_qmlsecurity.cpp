@@ -112,6 +112,18 @@ private Q_SLOTS:
         QVERIFY(qml.contains(QStringLiteral("onBackgroundRefreshStarted")));
         QVERIFY(qml.contains(QStringLiteral("issueList.contentY = checklist.savedIssueListContentY")));
     }
+
+    void lastRefreshUsesJavaScriptDateFormatting()
+    {
+        QFile file(QStringLiteral(KGITDO_SOURCE_DIR) + QStringLiteral("/src/ChecklistView.qml"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString qml = QString::fromUtf8(file.readAll());
+        // QDateTime properties are exposed as JavaScript Date objects in QML.
+        // Keep this static check because the runtime auth-page test doesn't
+        // load a GitHub issue response to make lastRefresh valid.
+        QVERIFY(qml.contains(QStringLiteral("issueController.lastRefresh.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)")));
+        QVERIFY(!qml.contains(QStringLiteral("toLocalTime(")));
+    }
 };
 
 QTEST_MAIN(QmlSecurityTest)

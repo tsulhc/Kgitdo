@@ -530,12 +530,11 @@ void IssueController::reloadInternal(bool background)
     m_reloadAfterRefresh = true;
     m_reloadAfterRefreshBackground = background;
     if (!m_auth->ensureFreshAccessToken()) {
-        if (background) {
-            return;
-        }
         if (m_auth->status() == AuthSession::Refreshing) {
-            m_errorMessage = QStringLiteral("Refreshing GitHub session. Issues will reload when ready.");
-            Q_EMIT errorMessageChanged();
+            if (!background) {
+                m_errorMessage = QStringLiteral("Refreshing GitHub session. Issues will reload when ready.");
+                Q_EMIT errorMessageChanged();
+            }
         } else {
             m_reloadAfterRefresh = false;
             m_reloadAfterRefreshBackground = false;
@@ -575,10 +574,7 @@ void IssueController::reloadInternal(bool background)
                                   // Selection changed mid-load: this data
                                   // belongs to the old selection. Discard it
                                   // and fetch once for the current one.
-                                  reloadInternal(background);
-                                  if (background) {
-                                      Q_EMIT backgroundRefreshFinished();
-                                  }
+                                  reloadInternal(false);
                                   return;
                               }
                               if (!result.ok) {
